@@ -4,18 +4,17 @@ using BepInEx.Logging;
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEngine;
-using UnityEngine.Audio;
 using Photon.Pun;
-using Photon.Realtime;
-using Zorro.Core;
+
 
 namespace MorePeak {
-    [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.6.2")]
+    [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.7.0")]
     public class MorePeakPlugin : BaseUnityPlugin {
         private static ManualLogSource ModLogger;
         private static ConfigEntry<string> selectedLevelConfig;
+        private static ConfigEntry<bool> showCurrentLevelGUIConfig;
+        private static ConfigEntry<bool> showSelectedLevelConfigGUIConfig;
         private static Dictionary<int, float> lastRandomizeTime = new Dictionary<int, float>();
         private const float RANDOMIZE_COOLDOWN = 1.0f;
 
@@ -30,10 +29,18 @@ namespace MorePeak {
 
             // Configuration
             selectedLevelConfig = Config.Bind("Settings", "SelectedLevel", "Random",
-                "Set to 'Random' for random levels, specify exact level name (e.g., 'WilIsland'), or specify multiple levels separated by commas for random selection from that list (e.g., 'Level_0, Level_1, Level_2')");
+                "Set to 'Random' for random levels, specify exact level name (e.g., 'Level_0'), or specify multiple levels separated by commas for random selection from that list (e.g., 'Level_0, Level_1, Level_2')");
+            
+            showCurrentLevelGUIConfig = Config.Bind("GUI", "ShowCurrentLevel", false,
+                "Whether to show the current level name on screen during gameplay");
+            
+            showSelectedLevelConfigGUIConfig = Config.Bind("GUI", "ShowSelectedLevelConfig", false,
+                "Whether to show the selected level configuration on screen during gameplay");
 
-            ModLogger.LogInfo("MorePeak v1.6.2 loaded!");
+            ModLogger.LogInfo("MorePeak v1.7.0 loaded!");
             ModLogger.LogInfo("Config: SelectedLevel = " + selectedLevelConfig.Value);
+            ModLogger.LogInfo("Config: ShowCurrentLevel = " + showCurrentLevelGUIConfig.Value);
+            ModLogger.LogInfo("Config: ShowSelectedLevelConfig = " + showSelectedLevelConfigGUIConfig.Value);
             ModLogger.LogInfo("Available levels will be listed when you start a game.");
 
             var harmony = new Harmony("com.smckeen.morepeak");
@@ -55,14 +62,25 @@ namespace MorePeak {
                     guiStyle.padding = new RectOffset(10, 10, 5, 5);
                 }
 
-                // Calculate position for top center
-                string displayText = "Current Level: " + currentLevelName;
-                Vector2 textSize = guiStyle.CalcSize(new GUIContent(displayText));
-                float x = (Screen.width - textSize.x) / 2;
-                float y = 20; // 20 pixels from top
+                float yOffset = 20; // Starting Y position
+                float lineHeight = 30; // Height between lines
 
-                // Draw the GUI
-                GUI.Box(new Rect(x, y, textSize.x, textSize.y), displayText, guiStyle);
+                // Show current level if enabled
+                if (showCurrentLevelGUIConfig.Value) {
+                    string currentLevelText = "Current Level: " + currentLevelName;
+                    Vector2 currentLevelSize = guiStyle.CalcSize(new GUIContent(currentLevelText));
+                    float x = (Screen.width - currentLevelSize.x) / 2;
+                    GUI.Box(new Rect(x, yOffset, currentLevelSize.x, currentLevelSize.y), currentLevelText, guiStyle);
+                    yOffset += lineHeight;
+                }
+
+                // Show selected level config if enabled
+                if (showSelectedLevelConfigGUIConfig.Value) {
+                    string selectedLevelText = "Config: " + selectedLevelConfig.Value;
+                    Vector2 selectedLevelSize = guiStyle.CalcSize(new GUIContent(selectedLevelText));
+                    float x = (Screen.width - selectedLevelSize.x) / 2;
+                    GUI.Box(new Rect(x, yOffset, selectedLevelSize.x, selectedLevelSize.y), selectedLevelText, guiStyle);
+                }
             }
         }
 
