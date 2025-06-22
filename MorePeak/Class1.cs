@@ -5,11 +5,12 @@ using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using static UnityEngine.ImageConversion;
 using Photon.Pun;
-
+using System.Reflection;
 
 namespace MorePeak {
-    [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.7.0")]
+    [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.0")]
     public class MorePeakPlugin : BaseUnityPlugin {
         private static ManualLogSource ModLogger;
         private static ConfigEntry<string> selectedLevelConfig;
@@ -23,9 +24,38 @@ namespace MorePeak {
         private static bool showLevelGUI = false;
         private static Texture2D guiBackgroundTexture;
         private static GUIStyle guiStyle;
+        
+        // Settings GUI variables
+        private static bool showSettingsGUI = false;
+        private static Rect settingsWindowRect = new Rect(0, 0, 330, 200); // Will be positioned dynamically
+        private static string tempSelectedLevel = "";
+        private static bool tempShowCurrentLevel = true;
+        private static bool tempShowSelectedLevelConfig = true;
+        private static Vector2 scrollPosition = Vector2.zero;
+        private static Texture2D settingsCogTexture;
+        private static int onGUICallCount = 0;
+        
+        // Cached GUIStyles for performance
+        private static GUIStyle cachedCogStyle;
+        private static GUIStyle cachedLabelStyle;
+        private static GUIStyle cachedTextFieldStyle;
+        private static GUIStyle cachedButtonStyle;
+        private static GUIStyle cachedToggleStyle;
+        private static GUIStyle cachedWindowStyle;
+        
+        // Cached textures for performance
+        private static Texture2D cachedDarkBackgroundTexture;
+        private static Texture2D cachedButtonBackgroundTexture;
+        private static Texture2D cachedButtonHoverTexture;
+        private static Texture2D cachedButtonActiveTexture;
+        private static Texture2D cachedTextFieldBackgroundTexture;
+        private static Texture2D cachedWindowBackgroundTexture;
 
         void Awake() {
             ModLogger = Logger;
+
+            // Load settings cog texture
+            LoadSettingsCogTexture();
 
             // Configuration
             selectedLevelConfig = Config.Bind("Settings", "SelectedLevel", "Random",
@@ -37,7 +67,7 @@ namespace MorePeak {
             showSelectedLevelConfigGUIConfig = Config.Bind("GUI", "ShowSelectedLevelConfig", false,
                 "Whether to show the selected level configuration on screen during gameplay");
 
-            ModLogger.LogInfo("MorePeak v1.7.0 loaded!");
+            ModLogger.LogInfo("MorePeak v1.8.0 loaded!");
             ModLogger.LogInfo("Config: SelectedLevel = " + selectedLevelConfig.Value);
             ModLogger.LogInfo("Config: ShowCurrentLevel = " + showCurrentLevelGUIConfig.Value);
             ModLogger.LogInfo("Config: ShowSelectedLevelConfig = " + showSelectedLevelConfigGUIConfig.Value);
@@ -48,10 +78,30 @@ namespace MorePeak {
         }
 
         void OnGUI() {
+            onGUICallCount++;
+            if (onGUICallCount % 60 == 0) { // Log every 60 frames (about once per second)
+                ModLogger.LogDebug($"OnGUI called {onGUICallCount} times, showLevelGUI={showLevelGUI}");
+            }
+            
+            // Ensure cached styles are initialized
+            if (cachedCogStyle == null) {
+                ModLogger.LogDebug("Initializing cached styles in OnGUI");
+                InitializeCachedStyles();
+            }
+            
+            // Draw settings cog button in top right
+            DrawSettingsCog();
+            
+            // Draw settings window if expanded
+            if (showSettingsGUI) {
+                ModLogger.LogDebug("Drawing settings window");
+                DrawSettingsWindow();
+            }
+            
             if (showLevelGUI && !string.IsNullOrEmpty(currentLevelName)) {
                 // Initialize GUI resources only once
                 if (guiBackgroundTexture == null) {
-                    guiBackgroundTexture = MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
+                    guiBackgroundTexture = cachedDarkBackgroundTexture ?? MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
                 }
 
                 if (guiStyle == null) {
@@ -90,7 +140,45 @@ namespace MorePeak {
                 DestroyImmediate(guiBackgroundTexture);
                 guiBackgroundTexture = null;
             }
+            if (settingsCogTexture != null) {
+                DestroyImmediate(settingsCogTexture);
+                settingsCogTexture = null;
+            }
+            
+            // Clean up cached textures
+            if (cachedDarkBackgroundTexture != null) {
+                DestroyImmediate(cachedDarkBackgroundTexture);
+                cachedDarkBackgroundTexture = null;
+            }
+            if (cachedButtonBackgroundTexture != null) {
+                DestroyImmediate(cachedButtonBackgroundTexture);
+                cachedButtonBackgroundTexture = null;
+            }
+            if (cachedButtonHoverTexture != null) {
+                DestroyImmediate(cachedButtonHoverTexture);
+                cachedButtonHoverTexture = null;
+            }
+            if (cachedButtonActiveTexture != null) {
+                DestroyImmediate(cachedButtonActiveTexture);
+                cachedButtonActiveTexture = null;
+            }
+            if (cachedTextFieldBackgroundTexture != null) {
+                DestroyImmediate(cachedTextFieldBackgroundTexture);
+                cachedTextFieldBackgroundTexture = null;
+            }
+            if (cachedWindowBackgroundTexture != null) {
+                DestroyImmediate(cachedWindowBackgroundTexture);
+                cachedWindowBackgroundTexture = null;
+            }
+            
+            // Clean up cached styles
             guiStyle = null;
+            cachedCogStyle = null;
+            cachedLabelStyle = null;
+            cachedTextFieldStyle = null;
+            cachedButtonStyle = null;
+            cachedToggleStyle = null;
+            cachedWindowStyle = null;
         }
 
         // Helper method to create a colored texture for GUI background
@@ -149,14 +237,22 @@ namespace MorePeak {
                     // Clean up old entries to prevent dictionary from growing indefinitely
                     if (lastRandomizeTime.Count > 10) {
                         var keysToRemove = new List<int>();
+                        float cutoffTime = currentTime - 300f; // 5 minutes ago
+                        
                         foreach (var kvp in lastRandomizeTime) {
-                            if (currentTime - kvp.Value > 300f) // Remove entries older than 5 minutes
-                            {
+                            if (kvp.Value < cutoffTime) {
                                 keysToRemove.Add(kvp.Key);
                             }
                         }
+                        
+                        // Remove old entries in batch
                         foreach (int key in keysToRemove) {
                             lastRandomizeTime.Remove(key);
+                        }
+                        
+                        // Log cleanup if significant
+                        if (keysToRemove.Count > 0) {
+                            ModLogger.LogDebug($"Cleaned up {keysToRemove.Count} old randomize time entries");
                         }
                     }
 
@@ -330,6 +426,247 @@ namespace MorePeak {
                     ModLogger?.LogError($"Error in biome variant randomization: {ex.Message}");
                 }
             }
+        }
+
+        private void DrawSettingsCog() {
+            // Only show settings cog when not in a round
+            if (showLevelGUI) {
+                // Close settings window if it's open when entering a round
+                if (showSettingsGUI) {
+                    showSettingsGUI = false;
+                }
+                ModLogger.LogDebug("Settings cog hidden - in a round (showLevelGUI = true)");
+                return;
+            }
+            
+            ModLogger.LogDebug("Drawing settings cog - not in a round");
+            
+            // Position in top right corner
+            float cogSize = 32;
+            float x = Screen.width - cogSize - 10;
+            float y = 10;
+            
+            ModLogger.LogDebug($"Settings cog position: x={x}, y={y}, size={cogSize}");
+            ModLogger.LogDebug($"Screen size: {Screen.width}x{Screen.height}");
+            
+            // Draw the settings cog button with the loaded texture
+            if (settingsCogTexture != null) {
+                ModLogger.LogDebug("Using settings cog texture");
+                var styleToUse = cachedCogStyle ?? GUI.skin.button;
+                if (GUI.Button(new Rect(x, y, cogSize, cogSize), settingsCogTexture, styleToUse)) {
+                    ModLogger.LogInfo("Settings cog clicked!");
+                    showSettingsGUI = !showSettingsGUI;
+                    
+                    // Initialize temp values when opening settings
+                    if (showSettingsGUI) {
+                        tempSelectedLevel = selectedLevelConfig.Value;
+                        tempShowCurrentLevel = showCurrentLevelGUIConfig.Value;
+                        tempShowSelectedLevelConfig = showSelectedLevelConfigGUIConfig.Value;
+                        
+                        // Position window below the button
+                        float windowX = x - 330 + cogSize; // Align right edge of window with right edge of button
+                        float windowY = y + cogSize + 5; // 5 pixels below the button
+                        
+                        // Ensure window stays within screen bounds
+                        if (windowX < 10) windowX = 10; // Keep at least 10px from left edge
+                        if (windowY + 200 > Screen.height - 10) windowY = Screen.height - 210; // Keep at least 10px from bottom edge
+                        
+                        settingsWindowRect = new Rect(windowX, windowY, 330, 200);
+                        ModLogger.LogInfo("Settings window opened");
+                    } else {
+                        ModLogger.LogInfo("Settings window closed");
+                    }
+                }
+            } else {
+                ModLogger.LogDebug("Using fallback text cog (⚙)");
+                // Fallback to text if texture failed to load
+                var fallbackStyle = new GUIStyle(cachedCogStyle ?? GUI.skin.button);
+                fallbackStyle.fontSize = 14;
+                fallbackStyle.fontStyle = FontStyle.Bold;
+                fallbackStyle.normal.textColor = Color.white;
+                fallbackStyle.hover.textColor = Color.yellow;
+                
+                if (GUI.Button(new Rect(x, y, cogSize, cogSize), "⚙", fallbackStyle)) {
+                    ModLogger.LogInfo("Settings cog clicked!");
+                    showSettingsGUI = !showSettingsGUI;
+                    
+                    // Initialize temp values when opening settings
+                    if (showSettingsGUI) {
+                        tempSelectedLevel = selectedLevelConfig.Value;
+                        tempShowCurrentLevel = showCurrentLevelGUIConfig.Value;
+                        tempShowSelectedLevelConfig = showSelectedLevelConfigGUIConfig.Value;
+                        
+                        // Position window below the button
+                        float windowX = x - 330 + cogSize; // Align right edge of window with right edge of button
+                        float windowY = y + cogSize + 5; // 5 pixels below the button
+                        
+                        // Ensure window stays within screen bounds
+                        if (windowX < 10) windowX = 10; // Keep at least 10px from left edge
+                        if (windowY + 200 > Screen.height - 10) windowY = Screen.height - 210; // Keep at least 10px from bottom edge
+                        
+                        settingsWindowRect = new Rect(windowX, windowY, 330, 200);
+                        ModLogger.LogInfo("Settings window opened");
+                    } else {
+                        ModLogger.LogInfo("Settings window closed");
+                    }
+                }
+            }
+        }
+        
+        private void DrawSettingsWindow() {
+            // Create semi-transparent background with better contrast
+            GUI.color = new Color(0, 0, 0, 0.9f);
+            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+            GUI.color = Color.white;
+            
+            var windowStyle = cachedWindowStyle ?? GUI.skin.window;
+            settingsWindowRect = GUI.Window(12345, settingsWindowRect, DrawSettingsWindowContents, "MorePeak Settings", windowStyle);
+        }
+        
+        private void DrawSettingsWindowContents(int windowID) {
+            float yPos = 30;
+            float lineHeight = 25;
+            float labelWidth = 150;
+            float controlWidth = 150;
+            
+            // Get styles with fallbacks
+            var labelStyle = cachedLabelStyle ?? GUI.skin.label;
+            var textFieldStyle = cachedTextFieldStyle ?? GUI.skin.textField;
+            var buttonStyle = cachedButtonStyle ?? GUI.skin.button;
+            var toggleStyle = cachedToggleStyle ?? GUI.skin.toggle;
+            
+            // Selected Level Configuration
+            GUI.Label(new Rect(10, yPos, labelWidth, 20), "Selected Level:", labelStyle);
+            yPos += lineHeight;
+            
+            string newSelectedLevel = GUI.TextField(new Rect(10, yPos, controlWidth, 20), tempSelectedLevel, textFieldStyle);
+            if (newSelectedLevel != tempSelectedLevel) {
+                tempSelectedLevel = newSelectedLevel;
+                // Apply immediately
+                selectedLevelConfig.Value = tempSelectedLevel;
+                Config.Save();
+                ModLogger.LogInfo("SelectedLevel updated to: " + tempSelectedLevel);
+            }
+            yPos += lineHeight + 5;
+            
+            // Quick preset button for Random only
+            if (GUI.Button(new Rect(10, yPos, 70, 20), "Random", buttonStyle)) {
+                tempSelectedLevel = "Random";
+                // Apply immediately
+                selectedLevelConfig.Value = tempSelectedLevel;
+                Config.Save();
+                ModLogger.LogInfo("SelectedLevel set to Random");
+            }
+            yPos += lineHeight + 10;
+            
+            // GUI Display Options
+            GUI.Label(new Rect(10, yPos, labelWidth, 20), "Display Options:", labelStyle);
+            yPos += lineHeight;
+            
+            bool newShowCurrentLevel = GUI.Toggle(new Rect(10, yPos, controlWidth, 20), tempShowCurrentLevel, "Show Current Level", toggleStyle);
+            if (newShowCurrentLevel != tempShowCurrentLevel) {
+                tempShowCurrentLevel = newShowCurrentLevel;
+                // Apply immediately
+                showCurrentLevelGUIConfig.Value = tempShowCurrentLevel;
+                Config.Save();
+                ModLogger.LogInfo("ShowCurrentLevel updated to: " + tempShowCurrentLevel);
+            }
+            yPos += lineHeight;
+            
+            bool newShowSelectedLevelConfig = GUI.Toggle(new Rect(10, yPos, controlWidth, 20), tempShowSelectedLevelConfig, "Show Config", toggleStyle);
+            if (newShowSelectedLevelConfig != tempShowSelectedLevelConfig) {
+                tempShowSelectedLevelConfig = newShowSelectedLevelConfig;
+                // Apply immediately
+                showSelectedLevelConfigGUIConfig.Value = tempShowSelectedLevelConfig;
+                Config.Save();
+                ModLogger.LogInfo("ShowSelectedLevelConfig updated to: " + tempShowSelectedLevelConfig);
+            }
+            yPos += lineHeight + 10;
+            
+            // Close button (no Apply button needed since changes are applied immediately)
+            if (GUI.Button(new Rect(10, yPos, 70, 20), "Close", buttonStyle)) {
+                showSettingsGUI = false;
+            }
+            
+            // Close button in top right of window
+            if (GUI.Button(new Rect(settingsWindowRect.width - 25, 5, 20, 20), "X", buttonStyle)) {
+                showSettingsGUI = false;
+            }
+            
+            // Make window draggable
+            GUI.DragWindow();
+        }
+
+        private void LoadSettingsCogTexture() {
+            try {
+                // Load the settings cog texture from embedded resource
+                using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("MorePeak.assets.settings-cog.png")) {
+                    if (stream != null) {
+                        byte[] imageData = new byte[stream.Length];
+                        stream.Read(imageData, 0, imageData.Length);
+                        
+                        settingsCogTexture = new Texture2D(2, 2);
+                        settingsCogTexture.LoadImage(imageData);
+                        ModLogger.LogInfo("Settings cog texture loaded successfully from embedded resource");
+                    } else {
+                        ModLogger.LogWarning("settings-cog.png embedded resource not found");
+                        // Create a fallback texture
+                        settingsCogTexture = MakeTexture(32, 32, Color.gray);
+                    }
+                }
+            } catch (Exception ex) {
+                ModLogger.LogError("Error loading settings cog texture: " + ex.Message);
+                // Create a fallback texture
+                settingsCogTexture = MakeTexture(32, 32, Color.gray);
+            }
+        }
+
+        private void InitializeCachedStyles() {
+            ModLogger.LogDebug("Initializing cached styles and textures");
+            
+            // Create cached textures once
+            cachedDarkBackgroundTexture = MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
+            cachedButtonBackgroundTexture = MakeTexture(2, 2, new Color(0.2f, 0.2f, 0.2f, 0.8f));
+            cachedButtonHoverTexture = MakeTexture(2, 2, new Color(0.3f, 0.3f, 0.3f, 0.9f));
+            cachedButtonActiveTexture = MakeTexture(2, 2, new Color(0.4f, 0.4f, 0.4f, 0.9f));
+            cachedTextFieldBackgroundTexture = MakeTexture(2, 2, new Color(0.2f, 0.2f, 0.2f, 0.9f));
+            cachedWindowBackgroundTexture = MakeTexture(2, 2, new Color(0.1f, 0.1f, 0.1f, 0.95f));
+            
+            ModLogger.LogDebug("Cached textures created");
+            
+            // Create cached GUIStyles
+            cachedCogStyle = new GUIStyle(GUI.skin.button);
+            cachedCogStyle.normal.background = cachedButtonBackgroundTexture;
+            cachedCogStyle.hover.background = cachedButtonHoverTexture;
+            cachedCogStyle.active.background = cachedButtonActiveTexture;
+            
+            cachedLabelStyle = new GUIStyle(GUI.skin.label);
+            cachedLabelStyle.fontSize = 12;
+            cachedLabelStyle.wordWrap = true;
+            cachedLabelStyle.normal.textColor = Color.white;
+            
+            cachedTextFieldStyle = new GUIStyle(GUI.skin.textField);
+            cachedTextFieldStyle.fontSize = 12;
+            cachedTextFieldStyle.normal.background = cachedTextFieldBackgroundTexture;
+            cachedTextFieldStyle.normal.textColor = Color.white;
+            
+            cachedButtonStyle = new GUIStyle(GUI.skin.button);
+            cachedButtonStyle.fontSize = 12;
+            cachedButtonStyle.normal.background = cachedButtonBackgroundTexture;
+            cachedButtonStyle.hover.background = cachedButtonHoverTexture;
+            cachedButtonStyle.normal.textColor = Color.white;
+            cachedButtonStyle.hover.textColor = Color.yellow;
+            
+            cachedToggleStyle = new GUIStyle(GUI.skin.toggle);
+            cachedToggleStyle.fontSize = 12;
+            cachedToggleStyle.normal.textColor = Color.white;
+            
+            cachedWindowStyle = new GUIStyle(GUI.skin.window);
+            cachedWindowStyle.fontSize = 14;
+            cachedWindowStyle.normal.background = cachedWindowBackgroundTexture;
+            cachedWindowStyle.onNormal.background = cachedWindowBackgroundTexture;
+            
+            ModLogger.LogDebug("Cached styles created successfully");
         }
     }
 }
