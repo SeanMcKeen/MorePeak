@@ -10,7 +10,7 @@ using Photon.Pun;
 using System.Reflection;
 
 namespace MorePeak {
-    [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.0")]
+    [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.1")]
     public class MorePeakPlugin : BaseUnityPlugin {
         private static ManualLogSource ModLogger;
         private static ConfigEntry<string> selectedLevelConfig;
@@ -59,7 +59,7 @@ namespace MorePeak {
 
             // Configuration
             selectedLevelConfig = Config.Bind("Settings", "SelectedLevel", "Random",
-                "Set to 'Random' for random levels, specify exact level name (e.g., 'Level_0'), or specify multiple levels separated by commas for random selection from that list (e.g., 'Level_0, Level_1, Level_2')");
+                "Set to 'Daily' for the daily map, 'Random' for random levels, specify exact level name (e.g., 'Level_0'), or specify multiple levels separated by commas for random selection from that list (e.g., 'Level_0, Level_1, Level_2')");
             
             showCurrentLevelGUIConfig = Config.Bind("GUI", "ShowCurrentLevel", false,
                 "Whether to show the current level name on screen during gameplay");
@@ -67,7 +67,7 @@ namespace MorePeak {
             showSelectedLevelConfigGUIConfig = Config.Bind("GUI", "ShowSelectedLevelConfig", false,
                 "Whether to show the selected level configuration on screen during gameplay");
 
-            ModLogger.LogInfo("MorePeak v1.8.0 loaded!");
+            ModLogger.LogInfo("MorePeak v1.8.1 loaded!");
             ModLogger.LogInfo("Config: SelectedLevel = " + selectedLevelConfig.Value);
             ModLogger.LogInfo("Config: ShowCurrentLevel = " + showCurrentLevelGUIConfig.Value);
             ModLogger.LogInfo("Config: ShowSelectedLevelConfig = " + showSelectedLevelConfigGUIConfig.Value);
@@ -99,16 +99,21 @@ namespace MorePeak {
             }
             
             if (showLevelGUI && !string.IsNullOrEmpty(currentLevelName)) {
-                // Initialize GUI resources only once
-                if (guiBackgroundTexture == null) {
-                    guiBackgroundTexture = cachedDarkBackgroundTexture ?? MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
+                // Ensure cached styles are initialized
+                if (cachedCogStyle == null) {
+                    ModLogger.LogDebug("Initializing cached styles in OnGUI");
+                    InitializeCachedStyles();
                 }
 
-                if (guiStyle == null) {
+                // Always use cached background texture
+                var backgroundTexture = cachedDarkBackgroundTexture ?? MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
+
+                // Create or recreate guiStyle with the background texture
+                if (guiStyle == null || guiStyle.normal.background != backgroundTexture) {
                     guiStyle = new GUIStyle(GUI.skin.box);
                     guiStyle.fontSize = 16;
                     guiStyle.normal.textColor = Color.white;
-                    guiStyle.normal.background = guiBackgroundTexture;
+                    guiStyle.normal.background = backgroundTexture;
                     guiStyle.padding = new RectOffset(10, 10, 5, 5);
                 }
 
@@ -259,7 +264,11 @@ namespace MorePeak {
                     string configValue = selectedLevelConfig?.Value?.Trim() ?? "Random";
                     string clientInfo = PhotonNetwork.InRoom ? "[MASTER]" : "[OFFLINE]";
 
-                    if (configValue.Equals("Random", StringComparison.OrdinalIgnoreCase)) {
+                    if (configValue.Equals("Daily", StringComparison.OrdinalIgnoreCase)) {
+                        // Use vanilla daily map - let original method handle it
+                        ModLogger.LogInfo($"{clientInfo} Using vanilla daily map");
+                        return true; // Let original method run
+                    } else if (configValue.Equals("Random", StringComparison.OrdinalIgnoreCase)) {
                         // Random level selection
                         int randomIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
                         string randomScenePath = __instance.AllLevels[randomIndex]?.ScenePath ?? "";
@@ -386,14 +395,10 @@ namespace MorePeak {
                         showLevelGUI = false;
                         currentLevelName = "";
                         ModLogger.LogInfo("Clearing level GUI - returning to Airport");
+                        
+                        // Clear guiStyle to force recreation with fresh background texture
+                        guiStyle = null;
                     }
-
-                    // Also clear GUI resources when loading any new scene to prevent buildup
-                    if (guiBackgroundTexture != null) {
-                        DestroyImmediate(guiBackgroundTexture);
-                        guiBackgroundTexture = null;
-                    }
-                    guiStyle = null;
                 } catch (Exception ex) {
                     ModLogger.LogError($"Error in LoadSceneProcess patch: {ex.Message}");
                 }
@@ -556,6 +561,15 @@ namespace MorePeak {
                 selectedLevelConfig.Value = tempSelectedLevel;
                 Config.Save();
                 ModLogger.LogInfo("SelectedLevel set to Random");
+            }
+            
+            // Daily preset button
+            if (GUI.Button(new Rect(85, yPos, 70, 20), "Daily", buttonStyle)) {
+                tempSelectedLevel = "Daily";
+                // Apply immediately
+                selectedLevelConfig.Value = tempSelectedLevel;
+                Config.Save();
+                ModLogger.LogInfo("SelectedLevel set to Daily");
             }
             yPos += lineHeight + 10;
             
