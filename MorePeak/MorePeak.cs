@@ -8,21 +8,21 @@ using UnityEngine;
 using static UnityEngine.ImageConversion;
 using Photon.Pun;
 using System.Reflection;
-using TMPro;
+using MorePeak.MonoBehaviours;
 
 namespace MorePeak;
 
 [BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.1")]
 public class MorePeakPlugin : BaseUnityPlugin {
 	private static ManualLogSource ModLogger;
-	private static ConfigEntry<string> selectedLevelConfig;
-	private static ConfigEntry<bool> showCurrentLevelGUIConfig;
-	private static ConfigEntry<bool> showSelectedLevelConfigGUIConfig;
+	internal static ConfigEntry<string> selectedLevelConfig;
+	internal static ConfigEntry<bool> showCurrentLevelGUIConfig;
+	internal static ConfigEntry<bool> showSelectedLevelConfigGUIConfig;
 	private static readonly Dictionary<int, float> lastRandomizeTime = new Dictionary<int, float>();
 	private const float RANDOMIZE_COOLDOWN = 1.0f;
 
 	// GUI variables
-	private static string currentLevelName = "";
+	internal static string currentLevelName = "";
 	private static bool showLevelGUI = false;
 	private static Texture2D guiBackgroundTexture;
 
@@ -51,9 +51,6 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	private static Texture2D cachedButtonActiveTexture;
 	private static Texture2D cachedTextFieldBackgroundTexture;
 	private static Texture2D cachedWindowBackgroundTexture;
-
-	// Static references for persistent TextMeshPro objects
-	private static TextMeshProUGUI levelDisplayTMP;
 
 	void Awake() {
 		ModLogger = Logger;
@@ -107,27 +104,6 @@ public class MorePeakPlugin : BaseUnityPlugin {
 			if (cachedCogStyle == null) {
 				ModLogger.LogDebug("Initializing cached styles in OnGUI");
 				InitializeCachedStyles();
-			}
-
-			// Build the combined text
-			if (levelDisplayTMP != null) {
-				List<string> displayLines = [];
-
-				if (showCurrentLevelGUIConfig.Value) {
-					displayLines.Add("Current Level: " + currentLevelName);
-				}
-
-				if (showSelectedLevelConfigGUIConfig.Value) {
-					displayLines.Add("Config: " + selectedLevelConfig.Value);
-				}
-
-				// Show/hide based on whether we have content
-				if (displayLines.Count > 0) {
-					levelDisplayTMP.gameObject.SetActive(true);
-					levelDisplayTMP.text = string.Join("\n", displayLines);
-				} else {
-					levelDisplayTMP.gameObject.SetActive(false);
-				}
 			}
 		}
 	}
@@ -425,41 +401,19 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	// Patch to grab the game's font, credit to https://github.com/borealityy/PeakTextChat
 	[HarmonyPatch(typeof(GUIManager), "Start")]
 	static class GUIManagerPatch {
-		public static GameObject canvas;
-		public static TMP_FontAsset darumaDropOneFont;
-
 		[HarmonyPostfix]
 		public static void Postfix(GUIManager __instance) {
-			var fogNotif = __instance.hudCanvas?.transform.Find("Notification/Fog")?.gameObject.GetComponent<TMP_Text>();
-			if (fogNotif != null)
-				darumaDropOneFont = fogNotif.font;
+			// credit to nickklmao, he kindly shared this from his MoreStats mod
+			var originalAscentUITransform = __instance.GetComponentInChildren<AscentUI>().transform;
 
-			// Store canvas reference for TextMeshPro positioning
-			canvas = __instance.hudCanvas?.gameObject;
+			var levelDisplayRectTransform = (RectTransform)Instantiate(originalAscentUITransform, originalAscentUITransform.parent);
+			levelDisplayRectTransform.name = "MorePeakLevelDisplay";
 
-			// Initialize TextMeshPro object if needed
-			if (levelDisplayTMP == null && canvas != null) {
-				// Create single text object for all level info
-				GameObject levelDisplayObj = new GameObject("LevelDisplayText");
-				levelDisplayObj.transform.SetParent(canvas.transform);
-				levelDisplayTMP = levelDisplayObj.AddComponent<TextMeshProUGUI>();
+			Destroy(levelDisplayRectTransform.GetComponent<AscentUI>());
+			levelDisplayRectTransform.gameObject.AddComponent<MorePeakHUD>();
 
-				// Setup text properties
-				levelDisplayTMP.font = darumaDropOneFont;
-				levelDisplayTMP.fontSize = 28f;
-				levelDisplayTMP.color = new Color(0.87f, 0.85f, 0.76f);
-				levelDisplayTMP.alignment = TextAlignmentOptions.TopRight;
-				levelDisplayTMP.outlineColor = new Color32(0, 0, 0, byte.MaxValue);
-				levelDisplayTMP.outlineWidth = 0.055f;
-
-				// Position text
-				RectTransform textRect = levelDisplayTMP.GetComponent<RectTransform>();
-				textRect.anchorMin = new Vector2(1f, 1f);
-				textRect.anchorMax = new Vector2(1f, 1f);
-				textRect.pivot = new Vector2(1f, 1f);
-				textRect.anchoredPosition = new Vector2(0, 0);
-				textRect.sizeDelta = new Vector2(600, 100);
-			}
+			levelDisplayRectTransform.pivot = levelDisplayRectTransform.anchorMax = levelDisplayRectTransform.anchorMin = new Vector2(1f, 1f);
+			levelDisplayRectTransform.anchoredPosition = Vector2.zero;
 		}
 	}
 
