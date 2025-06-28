@@ -12,7 +12,7 @@ using MorePeak.MonoBehaviours;
 
 namespace MorePeak;
 
-[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.1")]
+[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.2")]
 public class MorePeakPlugin : BaseUnityPlugin {
 	private static ManualLogSource ModLogger;
 	internal static ConfigEntry<string> selectedLevelConfig;
