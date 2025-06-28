@@ -10,20 +10,27 @@
       https://api.nuget.org/v3/index.json;
       https://nuget.bepinex.dev/v3/index.json;
     </RestoreAdditionalProjectSources>
+		<PeakDir>/home/brad/.local/share/Steam/steamapps/common/PEAK</PeakDir>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
-      <HintPath>/home/brad/.local/share/Steam/steamapps/common/PEAK/PEAK_Data/Managed/Assembly-CSharp.dll</HintPath>
+      <HintPath>$(PeakDir)/PEAK_Data/Managed/Assembly-CSharp.dll</HintPath>
     </Reference>
     <Reference Include="PhotonUnityNetworking">
-      <HintPath>/home/brad/.local/share/Steam/steamapps/common/PEAK/PEAK_Data/Managed/PhotonUnityNetworking.dll</HintPath>
+      <HintPath>$(PeakDir)/PEAK_Data/Managed/PhotonUnityNetworking.dll</HintPath>
     </Reference>
     <Reference Include="Sirenix.Serialization">
-      <HintPath>/home/brad/.local/share/Steam/steamapps/common/PEAK/PEAK_Data/Managed/Sirenix.Serialization.dll</HintPath>
+      <HintPath>$(PeakDir)/PEAK_Data/Managed/Sirenix.Serialization.dll</HintPath>
     </Reference>
     <Reference Include="Zorro.Core.Runtime">
-      <HintPath>/home/brad/.local/share/Steam/steamapps/common/PEAK/PEAK_Data/Managed/Zorro.Core.Runtime.dll</HintPath>
+      <HintPath>$(PeakDir)/PEAK_Data/Managed/Zorro.Core.Runtime.dll</HintPath>
+    </Reference>
+		<Reference Include="UnityEngine.UI">
+      <HintPath>$(PeakDir)/PEAK_Data/Managed/UnityEngine.UI.dll</HintPath>
+    </Reference>
+		<Reference Include="Unity.TextMeshPro">
+      <HintPath>$(PeakDir)/PEAK_Data/Managed/Unity.TextMeshPro.dll</HintPath>
     </Reference>
   </ItemGroup>
 
