@@ -8,6 +8,7 @@ using UnityEngine;
 using static UnityEngine.ImageConversion;
 using Photon.Pun;
 using System.Reflection;
+using TMPro;
 
 namespace MorePeak;
 
@@ -24,7 +25,6 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	private static string currentLevelName = "";
 	private static bool showLevelGUI = false;
 	private static Texture2D guiBackgroundTexture;
-	private static GUIStyle guiStyle;
 
 	// Settings GUI variables
 	private static bool showSettingsGUI = false;
@@ -51,6 +51,9 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	private static Texture2D cachedButtonActiveTexture;
 	private static Texture2D cachedTextFieldBackgroundTexture;
 	private static Texture2D cachedWindowBackgroundTexture;
+
+	// Static references for persistent TextMeshPro objects
+	private static TextMeshProUGUI levelDisplayTMP;
 
 	void Awake() {
 		ModLogger = Logger;
@@ -106,36 +109,25 @@ public class MorePeakPlugin : BaseUnityPlugin {
 				InitializeCachedStyles();
 			}
 
-			// Always use cached background texture
-			var backgroundTexture = cachedDarkBackgroundTexture ?? MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
+			// Build the combined text
+			if (levelDisplayTMP != null) {
+				List<string> displayLines = [];
 
-			// Create or recreate guiStyle with the background texture
-			if (guiStyle == null || guiStyle.normal.background != backgroundTexture) {
-				guiStyle = new GUIStyle(GUI.skin.box);
-				guiStyle.fontSize = 16;
-				guiStyle.normal.textColor = Color.white;
-				guiStyle.normal.background = backgroundTexture;
-				guiStyle.padding = new RectOffset(10, 10, 5, 5);
-			}
+				if (showCurrentLevelGUIConfig.Value) {
+					displayLines.Add("Current Level: " + currentLevelName);
+				}
 
-			float yOffset = 20; // Starting Y position
-			float lineHeight = 30; // Height between lines
+				if (showSelectedLevelConfigGUIConfig.Value) {
+					displayLines.Add("Config: " + selectedLevelConfig.Value);
+				}
 
-			// Show current level if enabled
-			if (showCurrentLevelGUIConfig.Value) {
-				string currentLevelText = "Current Level: " + currentLevelName;
-				Vector2 currentLevelSize = guiStyle.CalcSize(new GUIContent(currentLevelText));
-				float x = (Screen.width - currentLevelSize.x) / 2;
-				GUI.Box(new Rect(x, yOffset, currentLevelSize.x, currentLevelSize.y), currentLevelText, guiStyle);
-				yOffset += lineHeight;
-			}
-
-			// Show selected level config if enabled
-			if (showSelectedLevelConfigGUIConfig.Value) {
-				string selectedLevelText = "Config: " + selectedLevelConfig.Value;
-				Vector2 selectedLevelSize = guiStyle.CalcSize(new GUIContent(selectedLevelText));
-				float x = (Screen.width - selectedLevelSize.x) / 2;
-				GUI.Box(new Rect(x, yOffset, selectedLevelSize.x, selectedLevelSize.y), selectedLevelText, guiStyle);
+				// Show/hide based on whether we have content
+				if (displayLines.Count > 0) {
+					levelDisplayTMP.gameObject.SetActive(true);
+					levelDisplayTMP.text = string.Join("\n", displayLines);
+				} else {
+					levelDisplayTMP.gameObject.SetActive(false);
+				}
 			}
 		}
 	}
@@ -178,7 +170,6 @@ public class MorePeakPlugin : BaseUnityPlugin {
 		}
 
 		// Clean up cached styles
-		guiStyle = null;
 		cachedCogStyle = null;
 		cachedLabelStyle = null;
 		cachedTextFieldStyle = null;
@@ -396,9 +387,6 @@ public class MorePeakPlugin : BaseUnityPlugin {
 					showLevelGUI = false;
 					currentLevelName = "";
 					ModLogger.LogInfo("Clearing level GUI - returning to Airport");
-
-					// Clear guiStyle to force recreation with fresh background texture
-					guiStyle = null;
 				}
 			} catch (Exception ex) {
 				ModLogger.LogError($"Error in LoadSceneProcess patch: {ex.Message}");
@@ -430,6 +418,47 @@ public class MorePeakPlugin : BaseUnityPlugin {
 				UnityEngine.Random.InitState(UnityEngine.Random.Range(0, int.MaxValue));
 			} catch (Exception ex) {
 				ModLogger?.LogError($"Error in biome variant randomization: {ex.Message}");
+			}
+		}
+	}
+
+	// Patch to grab the game's font, credit to https://github.com/borealityy/PeakTextChat
+	[HarmonyPatch(typeof(GUIManager), "Start")]
+	static class GUIManagerPatch {
+		public static GameObject canvas;
+		public static TMP_FontAsset darumaDropOneFont;
+
+		[HarmonyPostfix]
+		public static void Postfix(GUIManager __instance) {
+			var fogNotif = __instance.hudCanvas?.transform.Find("Notification/Fog")?.gameObject.GetComponent<TMP_Text>();
+			if (fogNotif != null)
+				darumaDropOneFont = fogNotif.font;
+
+			// Store canvas reference for TextMeshPro positioning
+			canvas = __instance.hudCanvas?.gameObject;
+
+			// Initialize TextMeshPro object if needed
+			if (levelDisplayTMP == null && canvas != null) {
+				// Create single text object for all level info
+				GameObject levelDisplayObj = new GameObject("LevelDisplayText");
+				levelDisplayObj.transform.SetParent(canvas.transform);
+				levelDisplayTMP = levelDisplayObj.AddComponent<TextMeshProUGUI>();
+
+				// Setup text properties
+				levelDisplayTMP.font = darumaDropOneFont;
+				levelDisplayTMP.fontSize = 28f;
+				levelDisplayTMP.color = new Color(0.87f, 0.85f, 0.76f);
+				levelDisplayTMP.alignment = TextAlignmentOptions.TopRight;
+				levelDisplayTMP.outlineColor = new Color32(0, 0, 0, byte.MaxValue);
+				levelDisplayTMP.outlineWidth = 0.055f;
+
+				// Position text
+				RectTransform textRect = levelDisplayTMP.GetComponent<RectTransform>();
+				textRect.anchorMin = new Vector2(1f, 1f);
+				textRect.anchorMax = new Vector2(1f, 1f);
+				textRect.pivot = new Vector2(1f, 1f);
+				textRect.anchoredPosition = new Vector2(0, 0);
+				textRect.sizeDelta = new Vector2(600, 100);
 			}
 		}
 	}
