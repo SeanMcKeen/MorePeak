@@ -4,13 +4,13 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <RootNamespace>MorePeak</RootNamespace>
     <AssemblyName>MorePeak</AssemblyName>
-		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RestoreAdditionalProjectSources>
       https://api.nuget.org/v3/index.json;
       https://nuget.bepinex.dev/v3/index.json;
     </RestoreAdditionalProjectSources>
-		<PeakDir>/home/brad/.local/share/Steam/steamapps/common/PEAK</PeakDir>
+    <PeakDir>/home/brad/.local/share/Steam/steamapps/common/PEAK</PeakDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,10 +26,10 @@
     <Reference Include="Zorro.Core.Runtime">
       <HintPath>$(PeakDir)/PEAK_Data/Managed/Zorro.Core.Runtime.dll</HintPath>
     </Reference>
-		<Reference Include="UnityEngine.UI">
+    <Reference Include="UnityEngine.UI">
       <HintPath>$(PeakDir)/PEAK_Data/Managed/UnityEngine.UI.dll</HintPath>
     </Reference>
-		<Reference Include="Unity.TextMeshPro">
+    <Reference Include="Unity.TextMeshPro">
       <HintPath>$(PeakDir)/PEAK_Data/Managed/Unity.TextMeshPro.dll</HintPath>
     </Reference>
   </ItemGroup>
