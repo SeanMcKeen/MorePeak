@@ -180,7 +180,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 				if (!hasLoggedLevels) {
 					ModLogger.LogInfo("=== AVAILABLE LEVELS ===");
 					for (int i = 0; i < __instance.AllLevels.Length; i++) {
-						string logScenePath = __instance.AllLevels[i]?.ScenePath ?? "Unknown";
+						string logScenePath = __instance.AllLevels[i] ?? "Unknown";
 						string levelName = System.IO.Path.GetFileNameWithoutExtension(logScenePath);
 						ModLogger.LogInfo($"Level {i}: {levelName}");
 					}
@@ -239,7 +239,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 				} else if (configValue.Equals("Random", StringComparison.OrdinalIgnoreCase)) {
 					// Random level selection
 					int randomIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
-					string randomScenePath = __instance.AllLevels[randomIndex]?.ScenePath ?? "";
+					string randomScenePath = __instance.AllLevels[randomIndex] ?? "";
 					__result = System.IO.Path.GetFileNameWithoutExtension(randomScenePath);
 
 					ModLogger.LogInfo($"{clientInfo} Random level selected: {__result} (index {randomIndex})");
@@ -261,7 +261,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 
 						// Check if this level exists
 						for (int i = 0; i < __instance.AllLevels.Length; i++) {
-							string searchScenePath = __instance.AllLevels[i]?.ScenePath ?? "";
+							string searchScenePath = __instance.AllLevels[i] ?? "";
 							string levelName = System.IO.Path.GetFileNameWithoutExtension(searchScenePath);
 							if (levelName.Equals(trimmedChoice, StringComparison.OrdinalIgnoreCase)) {
 								validLevels.Add(levelName);
@@ -286,7 +286,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 						// No valid levels found in the list, use random
 						ModLogger.LogWarning($"No valid levels found in list '{configValue}'! Using random level instead.");
 						int fallbackIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
-						string fallbackScenePath = __instance.AllLevels[fallbackIndex]?.ScenePath ?? "";
+						string fallbackScenePath = __instance.AllLevels[fallbackIndex] ?? "";
 						__result = System.IO.Path.GetFileNameWithoutExtension(fallbackScenePath);
 
 						ModLogger.LogInfo($"{clientInfo} Fallback random level: {__result} (index {fallbackIndex})");
@@ -300,7 +300,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 				} else {
 					// Single specific level by name
 					for (int i = 0; i < __instance.AllLevels.Length; i++) {
-						string searchScenePath = __instance.AllLevels[i]?.ScenePath ?? "";
+						string searchScenePath = __instance.AllLevels[i] ?? "";
 						string levelName = System.IO.Path.GetFileNameWithoutExtension(searchScenePath);
 						if (levelName.Equals(configValue, StringComparison.OrdinalIgnoreCase)) {
 							__result = levelName;
@@ -318,7 +318,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 					// If specific level not found, log warning and use random
 					ModLogger.LogWarning($"Level '{configValue}' not found! Using random level instead.");
 					int fallbackIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
-					string fallbackScenePath = __instance.AllLevels[fallbackIndex]?.ScenePath ?? "";
+					string fallbackScenePath = __instance.AllLevels[fallbackIndex] ?? "";
 					__result = System.IO.Path.GetFileNameWithoutExtension(fallbackScenePath);
 
 					ModLogger.LogInfo($"{clientInfo} Fallback random level: {__result} (index {fallbackIndex})");
