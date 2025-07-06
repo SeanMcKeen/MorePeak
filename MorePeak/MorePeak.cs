@@ -12,7 +12,7 @@ using MorePeak.MonoBehaviours;
 
 namespace MorePeak;
 
-[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.8.2")]
+[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.9.0")]
 public class MorePeakPlugin : BaseUnityPlugin {
 	private static ManualLogSource ModLogger;
 	internal static ConfigEntry<string> selectedLevelConfig;
@@ -68,7 +68,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 		showSelectedLevelConfigGUIConfig = Config.Bind("GUI", "ShowSelectedLevelConfig", false,
 			"Whether to show the selected level configuration on screen during gameplay");
 
-		ModLogger.LogInfo("MorePeak v1.8.1 loaded!");
+		ModLogger.LogInfo("MorePeak v1.9.0 loaded!");
 		ModLogger.LogInfo("Config: SelectedLevel = " + selectedLevelConfig.Value);
 		ModLogger.LogInfo("Config: ShowCurrentLevel = " + showCurrentLevelGUIConfig.Value);
 		ModLogger.LogInfo("Config: ShowSelectedLevelConfig = " + showSelectedLevelConfigGUIConfig.Value);
