@@ -403,18 +403,35 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	static class GUIManagerPatch {
 		[HarmonyPostfix]
 		public static void Postfix(GUIManager __instance) {
-			// credit to nickklmao, he kindly shared this from his MoreStats mod
-			var originalAscentUITransform = __instance.GetComponentInChildren<AscentUI>().transform;
-
-			var levelDisplayRectTransform = (RectTransform)Instantiate(originalAscentUITransform, originalAscentUITransform.parent);
-			levelDisplayRectTransform.name = "MorePeakLevelDisplay";
-
-			Destroy(levelDisplayRectTransform.GetComponent<AscentUI>());
-			levelDisplayRectTransform.gameObject.AddComponent<MorePeakHUD>();
-
-			levelDisplayRectTransform.pivot = levelDisplayRectTransform.anchorMax = levelDisplayRectTransform.anchorMin = new Vector2(1f, 1f);
-			levelDisplayRectTransform.anchoredPosition = Vector2.zero;
+		    try {
+		        var originalAscentUI = __instance.GetComponentInChildren<AscentUI>();
+		        if (originalAscentUI == null) {
+		            MorePeakPlugin.ModLogger.LogWarning("AscentUI not found in GUIManager. Skipping MorePeak HUD initialization.");
+		            return;
+		        }
+		
+		        var originalAscentUITransform = originalAscentUI.transform;
+		
+		        var levelDisplayRectTransform = (RectTransform)UnityEngine.Object.Instantiate(
+		            originalAscentUITransform, originalAscentUITransform.parent);
+		        levelDisplayRectTransform.name = "MorePeakLevelDisplay";
+		
+		        var ascentComponent = levelDisplayRectTransform.GetComponent<AscentUI>();
+		        if (ascentComponent != null) {
+		            UnityEngine.Object.Destroy(ascentComponent);
+		        }
+		
+		        levelDisplayRectTransform.gameObject.AddComponent<MorePeakHUD>();
+		
+		        levelDisplayRectTransform.pivot = levelDisplayRectTransform.anchorMax = levelDisplayRectTransform.anchorMin = new Vector2(1f, 1f);
+		        levelDisplayRectTransform.anchoredPosition = Vector2.zero;
+		
+		        MorePeakPlugin.ModLogger.LogInfo("MorePeak HUD initialized successfully.");
+		    } catch (Exception ex) {
+		        MorePeakPlugin.ModLogger.LogError($"Error initializing MorePeak HUD: {ex}");
+		    }
 		}
+
 	}
 
 	private void DrawSettingsCog() {
@@ -424,23 +441,16 @@ public class MorePeakPlugin : BaseUnityPlugin {
 			if (showSettingsGUI) {
 				showSettingsGUI = false;
 			}
-			ModLogger.LogDebug("Settings cog hidden - in a round (showLevelGUI = true)");
 			return;
 		}
-
-		ModLogger.LogDebug("Drawing settings cog - not in a round");
 
 		// Position in top right corner
 		float cogSize = 32;
 		float x = Screen.width - cogSize - 10;
 		float y = 10;
 
-		ModLogger.LogDebug($"Settings cog position: x={x}, y={y}, size={cogSize}");
-		ModLogger.LogDebug($"Screen size: {Screen.width}x{Screen.height}");
-
 		// Draw the settings cog button with the loaded texture
 		if (settingsCogTexture != null) {
-			ModLogger.LogDebug("Using settings cog texture");
 			var styleToUse = cachedCogStyle ?? GUI.skin.button;
 			if (GUI.Button(new Rect(x, y, cogSize, cogSize), settingsCogTexture, styleToUse)) {
 				ModLogger.LogInfo("Settings cog clicked!");
