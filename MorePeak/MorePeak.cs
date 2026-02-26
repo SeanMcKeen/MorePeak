@@ -1,42 +1,85 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
+using Peak.Network;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using static UnityEngine.ImageConversion;
-using Photon.Pun;
-using System.Reflection;
 using MorePeak.MonoBehaviours;
 
 namespace MorePeak;
 
-[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.9.0")]
+[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.9.2")]
 public class MorePeakPlugin : BaseUnityPlugin {
-	private static ManualLogSource ModLogger;
+	// -------------------------------------------------------------------------
+	// Static logger — exposed internally so MorePeakHUD can call LogVerbose too.
+	// -------------------------------------------------------------------------
+	internal static ManualLogSource ModLogger;
+
+	// -------------------------------------------------------------------------
+	// Configuration entries
+	// -------------------------------------------------------------------------
+
+	/// <summary>
+	/// Which level(s) to load. Accepts: "Random", "Daily", a single level name,
+	/// or a comma-separated list of level names for random selection from that pool.
+	/// </summary>
 	internal static ConfigEntry<string> selectedLevelConfig;
+
+	/// <summary>Show the loaded level name on-screen during a round.</summary>
 	internal static ConfigEntry<bool> showCurrentLevelGUIConfig;
+
+	/// <summary>Show the current SelectedLevel config value on-screen during a round.</summary>
 	internal static ConfigEntry<bool> showSelectedLevelConfigGUIConfig;
-	private static readonly Dictionary<int, float> lastRandomizeTime = new Dictionary<int, float>();
-	private const float RANDOMIZE_COOLDOWN = 1.0f;
 
-	// GUI variables
+	/// <summary>
+	/// When true, the mod emits detailed diagnostic messages every frame / on every
+	/// significant internal event. Keep disabled for normal play to avoid log spam.
+	/// </summary>
+	internal static ConfigEntry<bool> verboseLoggingConfig;
+
+	// -------------------------------------------------------------------------
+	// Runtime state
+	// -------------------------------------------------------------------------
+
+	/// <summary>Name of the level that was most recently selected/received.</summary>
 	internal static string currentLevelName = "";
-	private static bool showLevelGUI = false;
-	private static Texture2D guiBackgroundTexture;
 
-	// Settings GUI variables
+	/// <summary>Controls whether the in-round level-name overlay is visible.</summary>
+	private static bool showLevelGUI = false;
+
+	// Per-instance cooldown dictionary to prevent GetLevel from being spammed
+	// within a single frame (e.g. if the method is called by several callers).
+	private const float RANDOMIZE_COOLDOWN = 1.0f;
+	private static readonly Dictionary<int, float> lastRandomizeTime = new Dictionary<int, float>();
+
+	// -------------------------------------------------------------------------
+	// GUI — texture assets
+	// -------------------------------------------------------------------------
+	private static Texture2D guiBackgroundTexture;
+	private static Texture2D settingsCogTexture;
+
+	// -------------------------------------------------------------------------
+	// GUI — settings window state
+	// -------------------------------------------------------------------------
 	private static bool showSettingsGUI = false;
-	private static Rect settingsWindowRect = new Rect(0, 0, 330, 200); // Will be positioned dynamically
+	private static Rect settingsWindowRect = new Rect(0, 0, 330, 255);
+
+	// Temporary mirrors of config values edited inside the window.
 	private static string tempSelectedLevel = "";
 	private static bool tempShowCurrentLevel = true;
 	private static bool tempShowSelectedLevelConfig = true;
+	private static bool tempVerboseLogging = false;
+
 	private static Vector2 scrollPosition = Vector2.zero;
-	private static Texture2D settingsCogTexture;
 	private static int onGUICallCount = 0;
 
-	// Cached GUIStyles for performance
+	// -------------------------------------------------------------------------
+	// GUI — cached GUIStyles (created once on first OnGUI call)
+	// -------------------------------------------------------------------------
 	private static GUIStyle cachedCogStyle;
 	private static GUIStyle cachedLabelStyle;
 	private static GUIStyle cachedTextFieldStyle;
@@ -44,7 +87,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	private static GUIStyle cachedToggleStyle;
 	private static GUIStyle cachedWindowStyle;
 
-	// Cached textures for performance
+	// Cached solid-colour textures used by the styles above.
 	private static Texture2D cachedDarkBackgroundTexture;
 	private static Texture2D cachedButtonBackgroundTexture;
 	private static Texture2D cachedButtonHoverTexture;
@@ -52,100 +95,90 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	private static Texture2D cachedTextFieldBackgroundTexture;
 	private static Texture2D cachedWindowBackgroundTexture;
 
+	// =========================================================================
+	// Unity lifecycle
+	// =========================================================================
+
 	void Awake() {
 		ModLogger = Logger;
 
-		// Load settings cog texture
+		// Load the settings-cog icon from embedded resources.
 		LoadSettingsCogTexture();
 
-		// Configuration
-		selectedLevelConfig = Config.Bind("Settings", "SelectedLevel", "Random",
-			"Set to 'Daily' for the daily map, 'Random' for random levels, specify exact level name (e.g., 'Level_0'), or specify multiple levels separated by commas for random selection from that list (e.g., 'Level_0, Level_1, Level_2')");
+		// ----- Bind configuration entries -----
+		selectedLevelConfig = Config.Bind(
+			"Settings",
+			"SelectedLevel",
+			"Random",
+			"Set to 'Daily' for the daily map, 'Random' for a fully random level, " +
+			"an exact level name (e.g. 'Level_0'), or a comma-separated list for " +
+			"random selection from that pool (e.g. 'Level_0, Level_1, Level_2').");
 
-		showCurrentLevelGUIConfig = Config.Bind("GUI", "ShowCurrentLevel", false,
-			"Whether to show the current level name on screen during gameplay");
+		showCurrentLevelGUIConfig = Config.Bind(
+			"GUI",
+			"ShowCurrentLevel",
+			false,
+			"Show the active level name in the top-right corner during a round.");
 
-		showSelectedLevelConfigGUIConfig = Config.Bind("GUI", "ShowSelectedLevelConfig", false,
-			"Whether to show the selected level configuration on screen during gameplay");
+		showSelectedLevelConfigGUIConfig = Config.Bind(
+			"GUI",
+			"ShowSelectedLevelConfig",
+			false,
+			"Show the current SelectedLevel config value in the top-right corner during a round.");
 
-		ModLogger.LogInfo("MorePeak v1.9.0 loaded!");
-		ModLogger.LogInfo("Config: SelectedLevel = " + selectedLevelConfig.Value);
-		ModLogger.LogInfo("Config: ShowCurrentLevel = " + showCurrentLevelGUIConfig.Value);
-		ModLogger.LogInfo("Config: ShowSelectedLevelConfig = " + showSelectedLevelConfigGUIConfig.Value);
-		ModLogger.LogInfo("Available levels will be listed when you start a game.");
+		verboseLoggingConfig = Config.Bind(
+			"Debug",
+			"VerboseLogging",
+			false,
+			"Emit detailed diagnostic log messages. Leave disabled during normal play " +
+			"to avoid log spam. Can also be toggled in-game via the settings cog.");
+
+		ModLogger.LogInfo("MorePeak v1.9.2 loaded.");
+		ModLogger.LogInfo($"Config  |  SelectedLevel={selectedLevelConfig.Value}" +
+		                  $"  ShowCurrentLevel={showCurrentLevelGUIConfig.Value}" +
+		                  $"  ShowSelectedLevelConfig={showSelectedLevelConfigGUIConfig.Value}" +
+		                  $"  VerboseLogging={verboseLoggingConfig.Value}");
+		ModLogger.LogInfo("Available levels will be listed in the log the first time a game is started.");
 
 		var harmony = new Harmony("com.smckeen.morepeak");
 		harmony.PatchAll();
+		LogVerbose("Harmony patches applied successfully.");
 	}
 
 	void OnGUI() {
 		onGUICallCount++;
-		if (onGUICallCount % 60 == 0) { // Log every 60 frames (about once per second)
-			ModLogger.LogDebug($"OnGUI called {onGUICallCount} times, showLevelGUI={showLevelGUI}");
-		}
 
-		// Ensure cached styles are initialized
+		// Lazy-initialise cached styles on the very first OnGUI call.
 		if (cachedCogStyle == null) {
-			ModLogger.LogDebug("Initializing cached styles in OnGUI");
+			LogVerbose("First OnGUI call — initialising cached GUI styles.");
 			InitializeCachedStyles();
 		}
 
-		// Draw settings cog button in top right
-		DrawSettingsCog();
-
-		// Draw settings window if expanded
-		if (showSettingsGUI) {
-			ModLogger.LogDebug("Drawing settings window");
-			DrawSettingsWindow();
+		if (onGUICallCount % 300 == 0) {
+			LogVerbose($"OnGUI heartbeat — frame {onGUICallCount}, showLevelGUI={showLevelGUI}, showSettingsGUI={showSettingsGUI}");
 		}
 
-		if (showLevelGUI && !string.IsNullOrEmpty(currentLevelName)) {
-			// Ensure cached styles are initialized
-			if (cachedCogStyle == null) {
-				ModLogger.LogDebug("Initializing cached styles in OnGUI");
-				InitializeCachedStyles();
-			}
+		DrawSettingsCog();
+
+		if (showSettingsGUI) {
+			DrawSettingsWindow();
 		}
 	}
 
 	void OnDestroy() {
-		// Clean up GUI resources when mod is unloaded
-		if (guiBackgroundTexture != null) {
-			DestroyImmediate(guiBackgroundTexture);
-			guiBackgroundTexture = null;
-		}
-		if (settingsCogTexture != null) {
-			DestroyImmediate(settingsCogTexture);
-			settingsCogTexture = null;
-		}
+		LogVerbose("MorePeakPlugin.OnDestroy — releasing GUI resources.");
 
-		// Clean up cached textures
-		if (cachedDarkBackgroundTexture != null) {
-			DestroyImmediate(cachedDarkBackgroundTexture);
-			cachedDarkBackgroundTexture = null;
-		}
-		if (cachedButtonBackgroundTexture != null) {
-			DestroyImmediate(cachedButtonBackgroundTexture);
-			cachedButtonBackgroundTexture = null;
-		}
-		if (cachedButtonHoverTexture != null) {
-			DestroyImmediate(cachedButtonHoverTexture);
-			cachedButtonHoverTexture = null;
-		}
-		if (cachedButtonActiveTexture != null) {
-			DestroyImmediate(cachedButtonActiveTexture);
-			cachedButtonActiveTexture = null;
-		}
-		if (cachedTextFieldBackgroundTexture != null) {
-			DestroyImmediate(cachedTextFieldBackgroundTexture);
-			cachedTextFieldBackgroundTexture = null;
-		}
-		if (cachedWindowBackgroundTexture != null) {
-			DestroyImmediate(cachedWindowBackgroundTexture);
-			cachedWindowBackgroundTexture = null;
-		}
+		// Destroy all textures to avoid GPU memory leaks when the mod is unloaded.
+		DestroyTextureSafe(ref guiBackgroundTexture);
+		DestroyTextureSafe(ref settingsCogTexture);
+		DestroyTextureSafe(ref cachedDarkBackgroundTexture);
+		DestroyTextureSafe(ref cachedButtonBackgroundTexture);
+		DestroyTextureSafe(ref cachedButtonHoverTexture);
+		DestroyTextureSafe(ref cachedButtonActiveTexture);
+		DestroyTextureSafe(ref cachedTextFieldBackgroundTexture);
+		DestroyTextureSafe(ref cachedWindowBackgroundTexture);
 
-		// Clean up cached styles
+		// Null out cached styles so they get re-created if the mod reloads.
 		cachedCogStyle = null;
 		cachedLabelStyle = null;
 		cachedTextFieldStyle = null;
@@ -154,526 +187,635 @@ public class MorePeakPlugin : BaseUnityPlugin {
 		cachedWindowStyle = null;
 	}
 
-	// Helper method to create a colored texture for GUI background
-	private Texture2D MakeTexture(int width, int height, Color color) {
-		Color[] pixels = new Color[width * height];
-		for (int i = 0; i < pixels.Length; i++) {
-			pixels[i] = color;
+	// =========================================================================
+	// Logging helpers
+	// =========================================================================
+
+	/// <summary>
+	/// Logs a message only when verbose logging is enabled in config.
+	/// Use this for high-frequency or diagnostic messages that would clutter
+	/// the log for normal players.
+	/// </summary>
+	internal static void LogVerbose(string message) {
+		if (verboseLoggingConfig?.Value == true) {
+			ModLogger?.LogDebug($"[VERBOSE] {message}");
 		}
-		Texture2D texture = new Texture2D(width, height);
-		texture.SetPixels(pixels);
-		texture.Apply();
-		return texture;
 	}
 
+	// =========================================================================
+	// Harmony patches
+	// =========================================================================
+
+	/// <summary>
+	/// Patches <see cref="MapBaker.GetLevel"/> so that the host (or offline player)
+	/// can override which level is loaded according to the SelectedLevel config.
+	///
+	/// Breaking change in game update: the backing array was renamed from
+	/// <c>AllLevels</c> (field) to <c>ScenePaths</c> (field).  AllLevels still
+	/// exists as an [Obsolete] property wrapper, but the compiled field reference
+	/// in any mod built against the old DLL causes a MissingFieldException.
+	/// This patch now correctly targets <c>ScenePaths</c>.
+	///
+	/// Also updated: host detection now uses <c>NetCode.Session.IsHost</c>
+	/// (the game's own abstraction) instead of <c>PhotonNetwork.IsMasterClient</c>
+	/// which the game itself has marked [Obsolete].
+	/// </summary>
 	[HarmonyPatch(typeof(MapBaker), "GetLevel")]
 	static class MapBaker_GetLevel_Patch {
+		// Log available levels only once per session.
 		static bool hasLoggedLevels = false;
 
 		static bool Prefix(MapBaker __instance, int levelIndex, ref string __result) {
 			try {
-				if (__instance?.AllLevels == null || __instance.AllLevels.Length == 0) {
+				// Guard: nothing to do if the scene list is empty.
+				if (__instance?.ScenePaths == null || __instance.ScenePaths.Length == 0) {
+					LogVerbose("MapBaker.GetLevel called with empty ScenePaths — deferring to original.");
 					return true; // Let original method handle it
 				}
 
-				// Log available levels once when first called
+				// Log the full level list once so the user knows what names to use in config.
 				if (!hasLoggedLevels) {
 					ModLogger.LogInfo("=== AVAILABLE LEVELS ===");
-					for (int i = 0; i < __instance.AllLevels.Length; i++) {
-						string logScenePath = __instance.AllLevels[i] ?? "Unknown";
+					for (int i = 0; i < __instance.ScenePaths.Length; i++) {
+						string logScenePath = __instance.ScenePaths[i] ?? "Unknown";
 						string levelName = System.IO.Path.GetFileNameWithoutExtension(logScenePath);
-						ModLogger.LogInfo($"Level {i}: {levelName}");
+						ModLogger.LogInfo($"  [{i}] {levelName}  (path: {logScenePath})");
 					}
 					ModLogger.LogInfo("========================");
-					ModLogger.LogInfo("You can now set 'SelectedLevel' in the config file to any of these level names, or keep it as 'Random'");
+					ModLogger.LogInfo("Set 'SelectedLevel' in the config (or via the in-game cog) to any level name above, or leave as 'Random'.");
 					hasLoggedLevels = true;
 				}
 
-				// Only modify behavior if we're in multiplayer and are the master client,
-				// or if we're in offline mode. This ensures only the decision-maker is affected.
-				if (PhotonNetwork.InRoom && !PhotonNetwork.IsMasterClient) {
-					// Non-master clients should never call this method in the first place
-					// according to the game's design, but if they do, let the original method run
-					ModLogger.LogInfo("[CLIENT] Non-master client called GetLevel - using original method");
+				// Non-host clients should never be calling GetLevel themselves; the host
+				// broadcasts the chosen scene name via BeginIslandLoadRPC.
+				// Using NetCode.Session.IsHost instead of the now-obsolete
+				// PhotonNetwork.IsMasterClient for alignment with the game's own API.
+				if (NetCode.Session.InRoom && !NetCode.Session.IsHost) {
+					LogVerbose("[CLIENT] Non-host called GetLevel — deferring to original method.");
 					return true;
 				}
 
-				// Apply cooldown to prevent excessive calls
+				// Per-instance cooldown: prevents excessive overrides when GetLevel is
+				// called rapidly (e.g. multiple UI updates in the same frame).
 				int instanceId = __instance.GetInstanceID();
 				float currentTime = Time.time;
-				if (lastRandomizeTime.ContainsKey(instanceId) &&
-					currentTime - lastRandomizeTime[instanceId] < RANDOMIZE_COOLDOWN) {
-					return true; // Let original method run
+				if (lastRandomizeTime.TryGetValue(instanceId, out float lastTime) &&
+					currentTime - lastTime < RANDOMIZE_COOLDOWN) {
+					LogVerbose($"MapBaker.GetLevel on instance {instanceId} within cooldown window — deferring.");
+					return true;
 				}
 				lastRandomizeTime[instanceId] = currentTime;
 
-				// Clean up old entries to prevent dictionary from growing indefinitely
+				// Periodically evict stale entries so the dictionary doesn't grow forever.
 				if (lastRandomizeTime.Count > 10) {
-					var keysToRemove = new List<int>();
-					float cutoffTime = currentTime - 300f; // 5 minutes ago
-
-					foreach (var kvp in lastRandomizeTime) {
-						if (kvp.Value < cutoffTime) {
-							keysToRemove.Add(kvp.Key);
-						}
-					}
-
-					// Remove old entries in batch
-					foreach (int key in keysToRemove) {
-						lastRandomizeTime.Remove(key);
-					}
-
-					// Log cleanup if significant
-					if (keysToRemove.Count > 0) {
-						ModLogger.LogDebug($"Cleaned up {keysToRemove.Count} old randomize time entries");
-					}
+					PruneRandomizeTimeCache(currentTime);
 				}
 
 				string configValue = selectedLevelConfig?.Value?.Trim() ?? "Random";
-				string clientInfo = PhotonNetwork.InRoom ? "[MASTER]" : "[OFFLINE]";
+				string clientInfo = NetCode.Session.InRoom ? "[HOST]" : "[OFFLINE]";
 
+				LogVerbose($"{clientInfo} MapBaker.GetLevel — configValue='{configValue}', levelIndex={levelIndex}");
+
+				// ---- Daily: let the original method pick via the server-provided index ----
 				if (configValue.Equals("Daily", StringComparison.OrdinalIgnoreCase)) {
-					// Use vanilla daily map - let original method handle it
-					ModLogger.LogInfo($"{clientInfo} Using vanilla daily map");
-					return true; // Let original method run
-				} else if (configValue.Equals("Random", StringComparison.OrdinalIgnoreCase)) {
-					// Random level selection
-					int randomIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
-					string randomScenePath = __instance.AllLevels[randomIndex] ?? "";
+					ModLogger.LogInfo($"{clientInfo} Using vanilla daily map (deferred to original GetLevel).");
+					return true;
+				}
+
+				// ---- Fully random: pick any level at uniform random ----
+				if (configValue.Equals("Random", StringComparison.OrdinalIgnoreCase)) {
+					int randomIndex = UnityEngine.Random.Range(0, __instance.ScenePaths.Length);
+					string randomScenePath = __instance.ScenePaths[randomIndex] ?? "";
 					__result = System.IO.Path.GetFileNameWithoutExtension(randomScenePath);
 
-					ModLogger.LogInfo($"{clientInfo} Random level selected: {__result} (index {randomIndex})");
-
-					// Update GUI
+					ModLogger.LogInfo($"{clientInfo} Random level selected: '{__result}' (index {randomIndex} of {__instance.ScenePaths.Length}).");
 					currentLevelName = __result;
 					showLevelGUI = true;
+					return false; // Skip original method — we've set __result
+				}
 
-					return false; // Skip original method
-				} else if (configValue.Contains(",")) {
-					// Multiple levels specified - pick random from the list
-					string[] levelChoices = configValue.Split(',');
-					List<string> validLevels = new List<string>();
+				// ---- Comma-separated list: pick random from the named pool ----
+				if (configValue.Contains(",")) {
+					return HandleLevelList(configValue, __instance, ref __result, clientInfo);
+				}
 
-					// Validate each level choice and collect valid ones
-					foreach (string choice in levelChoices) {
-						string trimmedChoice = choice.Trim();
-						if (string.IsNullOrEmpty(trimmedChoice)) continue;
+				// ---- Single specific level by name ----
+				return HandleSpecificLevel(configValue, __instance, ref __result, clientInfo);
 
-						// Check if this level exists
-						for (int i = 0; i < __instance.AllLevels.Length; i++) {
-							string searchScenePath = __instance.AllLevels[i] ?? "";
-							string levelName = System.IO.Path.GetFileNameWithoutExtension(searchScenePath);
-							if (levelName.Equals(trimmedChoice, StringComparison.OrdinalIgnoreCase)) {
-								validLevels.Add(levelName);
-								break;
-							}
-						}
+			} catch (Exception ex) {
+				ModLogger.LogError($"[MorePeak] Unhandled exception in MapBaker.GetLevel patch: {ex}");
+				return true; // Always fall back to original on unexpected failure
+			}
+		}
+
+		/// <summary>
+		/// Handles a comma-separated list of level names by picking one at random from
+		/// the subset that actually exists in <paramref name="instance"/>.ScenePaths.
+		/// Falls back to a fully random level if none of the named levels are found.
+		/// </summary>
+		private static bool HandleLevelList(
+			string configValue, MapBaker instance, ref string result, string clientInfo) {
+
+			string[] levelChoices = configValue.Split(',');
+			var validLevels = new List<string>();
+
+			foreach (string choice in levelChoices) {
+				string trimmedChoice = choice.Trim();
+				if (string.IsNullOrEmpty(trimmedChoice)) continue;
+
+				for (int i = 0; i < instance.ScenePaths.Length; i++) {
+					string levelName = System.IO.Path.GetFileNameWithoutExtension(
+						instance.ScenePaths[i] ?? "");
+					if (levelName.Equals(trimmedChoice, StringComparison.OrdinalIgnoreCase)) {
+						validLevels.Add(levelName);
+						LogVerbose($"  Validated level from list: '{levelName}'.");
+						break;
 					}
+				}
+			}
 
-					if (validLevels.Count > 0) {
-						// Pick random from valid levels
-						string selectedLevel = validLevels[UnityEngine.Random.Range(0, validLevels.Count)];
-						__result = selectedLevel;
+			if (validLevels.Count > 0) {
+				result = validLevels[UnityEngine.Random.Range(0, validLevels.Count)];
+				ModLogger.LogInfo(
+					$"{clientInfo} Random level from list selected: '{result}' " +
+					$"({validLevels.Count} valid option(s) from the configured pool).");
+			} else {
+				// None of the listed names matched — fall back to a fully random level.
+				ModLogger.LogWarning(
+					$"[MorePeak] No valid levels found in list '{configValue}'. " +
+					$"Falling back to fully random selection.");
+				int fallbackIndex = UnityEngine.Random.Range(0, instance.ScenePaths.Length);
+				result = System.IO.Path.GetFileNameWithoutExtension(
+					instance.ScenePaths[fallbackIndex] ?? "");
+				ModLogger.LogInfo(
+					$"{clientInfo} Fallback random level: '{result}' (index {fallbackIndex}).");
+			}
 
-						ModLogger.LogInfo($"{clientInfo} Random level from list selected: {__result} (from {validLevels.Count} valid options)");
+			currentLevelName = result;
+			showLevelGUI = true;
+			return false; // Skip original method
+		}
 
-						// Update GUI
-						currentLevelName = __result;
-						showLevelGUI = true;
+		/// <summary>
+		/// Handles a single exact level name.  Falls back to fully random if not found.
+		/// </summary>
+		private static bool HandleSpecificLevel(
+			string configValue, MapBaker instance, ref string result, string clientInfo) {
 
-						return false; // Skip original method
-					} else {
-						// No valid levels found in the list, use random
-						ModLogger.LogWarning($"No valid levels found in list '{configValue}'! Using random level instead.");
-						int fallbackIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
-						string fallbackScenePath = __instance.AllLevels[fallbackIndex] ?? "";
-						__result = System.IO.Path.GetFileNameWithoutExtension(fallbackScenePath);
-
-						ModLogger.LogInfo($"{clientInfo} Fallback random level: {__result} (index {fallbackIndex})");
-
-						// Update GUI
-						currentLevelName = __result;
-						showLevelGUI = true;
-
-						return false; // Skip original method
-					}
-				} else {
-					// Single specific level by name
-					for (int i = 0; i < __instance.AllLevels.Length; i++) {
-						string searchScenePath = __instance.AllLevels[i] ?? "";
-						string levelName = System.IO.Path.GetFileNameWithoutExtension(searchScenePath);
-						if (levelName.Equals(configValue, StringComparison.OrdinalIgnoreCase)) {
-							__result = levelName;
-
-							ModLogger.LogInfo($"{clientInfo} Specific level selected: {__result} (index {i})");
-
-							// Update GUI
-							currentLevelName = __result;
-							showLevelGUI = true;
-
-							return false; // Skip original method
-						}
-					}
-
-					// If specific level not found, log warning and use random
-					ModLogger.LogWarning($"Level '{configValue}' not found! Using random level instead.");
-					int fallbackIndex = UnityEngine.Random.Range(0, __instance.AllLevels.Length);
-					string fallbackScenePath = __instance.AllLevels[fallbackIndex] ?? "";
-					__result = System.IO.Path.GetFileNameWithoutExtension(fallbackScenePath);
-
-					ModLogger.LogInfo($"{clientInfo} Fallback random level: {__result} (index {fallbackIndex})");
-
-					// Update GUI
-					currentLevelName = __result;
+			for (int i = 0; i < instance.ScenePaths.Length; i++) {
+				string levelName = System.IO.Path.GetFileNameWithoutExtension(
+					instance.ScenePaths[i] ?? "");
+				if (levelName.Equals(configValue, StringComparison.OrdinalIgnoreCase)) {
+					result = levelName;
+					ModLogger.LogInfo(
+						$"{clientInfo} Specific level selected: '{result}' (index {i}).");
+					currentLevelName = result;
 					showLevelGUI = true;
-
 					return false; // Skip original method
 				}
-			} catch (Exception ex) {
-				ModLogger.LogError($"Error in MapBaker.GetLevel patch: {ex.Message}");
-				return true; // Let original method handle it
+			}
+
+			// Level name not found — warn and fall back to random.
+			ModLogger.LogWarning(
+				$"[MorePeak] Level '{configValue}' not found in ScenePaths. " +
+				$"Falling back to random selection.");
+			int fallbackIndex = UnityEngine.Random.Range(0, instance.ScenePaths.Length);
+			result = System.IO.Path.GetFileNameWithoutExtension(
+				instance.ScenePaths[fallbackIndex] ?? "");
+			ModLogger.LogInfo(
+				$"{clientInfo} Fallback random level: '{result}' (index {fallbackIndex}).");
+			currentLevelName = result;
+			showLevelGUI = true;
+			return false; // Skip original method
+		}
+
+		/// <summary>
+		/// Removes entries from <see cref="lastRandomizeTime"/> that are older than
+		/// 5 minutes, preventing unbounded growth over long sessions.
+		/// </summary>
+		private static void PruneRandomizeTimeCache(float currentTime) {
+			float cutoff = currentTime - 300f; // 5 minutes
+			var toRemove = new List<int>();
+			foreach (var kvp in lastRandomizeTime) {
+				if (kvp.Value < cutoff) toRemove.Add(kvp.Key);
+			}
+			foreach (int key in toRemove) lastRandomizeTime.Remove(key);
+			if (toRemove.Count > 0) {
+				LogVerbose($"Pruned {toRemove.Count} stale entry/entries from randomize-time cache.");
 			}
 		}
 	}
 
-	// Patch to display the level name for all players when they receive the scene load RPC
+	/// <summary>
+	/// Patches <see cref="AirportCheckInKiosk.BeginIslandLoadRPC"/> so that ALL
+	/// connected clients (not just the host) update the on-screen level name when
+	/// they receive the RPC to load a scene.
+	///
+	/// Updated: host detection uses <c>NetCode.Session.IsHost</c>.
+	/// </summary>
 	[HarmonyPatch(typeof(AirportCheckInKiosk), "BeginIslandLoadRPC")]
 	static class AirportCheckInKiosk_BeginIslandLoadRPC_Patch {
 		static void Prefix(string sceneName, int ascent) {
 			try {
-				// Update GUI for all clients when they receive the scene load command
 				currentLevelName = sceneName;
 				showLevelGUI = true;
 
-				string clientInfo = PhotonNetwork.IsMasterClient ? "[MASTER]" : "[CLIENT]";
-				ModLogger.LogInfo($"{clientInfo} Loading level: {sceneName} (ascent: {ascent})");
+				// Use the game's own host-detection API rather than the now-obsolete
+				// PhotonNetwork.IsMasterClient.
+				string clientInfo = NetCode.Session.IsHost ? "[HOST]" : "[CLIENT]";
+				ModLogger.LogInfo($"{clientInfo} BeginIslandLoadRPC received — loading level: '{sceneName}' (ascent: {ascent}).");
+				LogVerbose($"{clientInfo} GUI updated: currentLevelName='{currentLevelName}', showLevelGUI=true.");
 			} catch (Exception ex) {
-				ModLogger.LogError($"Error in BeginIslandLoadRPC patch: {ex.Message}");
+				ModLogger.LogError($"[MorePeak] Exception in BeginIslandLoadRPC patch: {ex}");
 			}
 		}
 	}
 
-	// Patch to clear GUI when returning to airport
+	/// <summary>
+	/// Patches <see cref="LoadingScreenHandler.LoadSceneProcess"/> to clear the
+	/// level-name overlay when the player returns to the Airport scene.
+	/// </summary>
 	[HarmonyPatch(typeof(LoadingScreenHandler), "LoadSceneProcess")]
 	static class LoadingScreenHandler_LoadSceneProcess_Patch {
 		static void Prefix(string sceneName) {
 			try {
-				// Clear GUI when loading Airport scene (returning from a level)
 				if (sceneName.Equals("Airport", StringComparison.OrdinalIgnoreCase)) {
 					showLevelGUI = false;
 					currentLevelName = "";
-					ModLogger.LogInfo("Clearing level GUI - returning to Airport");
+					ModLogger.LogInfo("[MorePeak] Returning to Airport — level overlay cleared.");
+					LogVerbose("LoadSceneProcess detected Airport load; showLevelGUI set to false.");
+				} else {
+					LogVerbose($"LoadSceneProcess called for scene '{sceneName}' (not Airport, no action).");
 				}
 			} catch (Exception ex) {
-				ModLogger.LogError($"Error in LoadSceneProcess patch: {ex.Message}");
+				ModLogger.LogError($"[MorePeak] Exception in LoadSceneProcess patch: {ex}");
 			}
 		}
 	}
 
-	// Additional patch for when players leave the room
+	/// <summary>
+	/// Patches <see cref="NetworkConnector.OnLeftRoom"/> to clear the level-name
+	/// overlay when the local player leaves the Photon room.
+	/// </summary>
 	[HarmonyPatch(typeof(NetworkConnector), "OnLeftRoom")]
 	static class NetworkConnector_OnLeftRoom_Patch {
 		static void Postfix() {
 			try {
-				// Clear GUI when leaving multiplayer room
 				showLevelGUI = false;
 				currentLevelName = "";
-				ModLogger.LogInfo("Clearing level GUI - left multiplayer room");
+				ModLogger.LogInfo("[MorePeak] Left multiplayer room — level overlay cleared.");
+				LogVerbose("NetworkConnector.OnLeftRoom fired; GUI state reset.");
 			} catch (Exception ex) {
-				ModLogger.LogError($"Error in OnLeftRoom patch: {ex.Message}");
+				ModLogger.LogError($"[MorePeak] Exception in OnLeftRoom patch: {ex}");
 			}
 		}
 	}
 
-	// Optional: Add some variety to biome variants within the same level
+	/// <summary>
+	/// Patches <see cref="LevelGeneration.RandomizeBiomeVariants"/> to re-seed
+	/// Unity's RNG after the game has already randomised biome variants, giving
+	/// a little extra variety within the same level.
+	/// </summary>
 	[HarmonyPatch(typeof(LevelGeneration), "RandomizeBiomeVariants")]
 	static class LevelGeneration_RandomizeBiomeVariants_Patch {
 		static void Postfix() {
 			try {
-				// Just add a bit of extra randomization to biome variants
-				UnityEngine.Random.InitState(UnityEngine.Random.Range(0, int.MaxValue));
+				int newSeed = UnityEngine.Random.Range(0, int.MaxValue);
+				UnityEngine.Random.InitState(newSeed);
+				LogVerbose($"BiomeVariants randomised — RNG re-seeded with {newSeed}.");
 			} catch (Exception ex) {
-				ModLogger?.LogError($"Error in biome variant randomization: {ex.Message}");
+				ModLogger?.LogError($"[MorePeak] Exception in RandomizeBiomeVariants patch: {ex}");
 			}
 		}
 	}
 
-	// Patch to grab the game's font, credit to https://github.com/borealityy/PeakTextChat
+	/// <summary>
+	/// Patches <see cref="GUIManager.Start"/> to inject a MorePeakHUD MonoBehaviour
+	/// that renders the level/config overlay using the game's own TMP font.
+	///
+	/// The approach clones the existing AscentUI element (which already carries a
+	/// TextMeshProUGUI with the correct font/material), strips the original
+	/// <see cref="AscentUI"/> component, and attaches <see cref="MorePeakHUD"/>
+	/// in its place.
+	///
+	/// If AscentUI is not found in the GUIManager hierarchy (e.g. the game moved it
+	/// in a future update) the patch bails out gracefully with a warning.
+	/// </summary>
 	[HarmonyPatch(typeof(GUIManager), "Start")]
 	static class GUIManagerPatch {
 		[HarmonyPostfix]
 		public static void Postfix(GUIManager __instance) {
-		    try {
-		        var originalAscentUI = __instance.GetComponentInChildren<AscentUI>();
-		        if (originalAscentUI == null) {
-		            MorePeakPlugin.ModLogger.LogWarning("AscentUI not found in GUIManager. Skipping MorePeak HUD initialization.");
-		            return;
-		        }
-		
-		        var originalAscentUITransform = originalAscentUI.transform;
-		
-		        var levelDisplayRectTransform = (RectTransform)UnityEngine.Object.Instantiate(
-		            originalAscentUITransform, originalAscentUITransform.parent);
-		        levelDisplayRectTransform.name = "MorePeakLevelDisplay";
-		
-		        var ascentComponent = levelDisplayRectTransform.GetComponent<AscentUI>();
-		        if (ascentComponent != null) {
-		            UnityEngine.Object.Destroy(ascentComponent);
-		        }
-		
-		        levelDisplayRectTransform.gameObject.AddComponent<MorePeakHUD>();
-		
-		        levelDisplayRectTransform.pivot = levelDisplayRectTransform.anchorMax = levelDisplayRectTransform.anchorMin = new Vector2(1f, 1f);
-		        levelDisplayRectTransform.anchoredPosition = Vector2.zero;
-		
-		        MorePeakPlugin.ModLogger.LogInfo("MorePeak HUD initialized successfully.");
-		    } catch (Exception ex) {
-		        MorePeakPlugin.ModLogger.LogError($"Error initializing MorePeak HUD: {ex}");
-		    }
-		}
+			try {
+				// Find AscentUI anywhere under the GUIManager hierarchy.
+				var originalAscentUI = __instance.GetComponentInChildren<AscentUI>(includeInactive: true);
 
+				if (originalAscentUI == null) {
+					ModLogger.LogWarning(
+						"[MorePeak] AscentUI not found in GUIManager children — " +
+						"MorePeak HUD will not be shown. " +
+						"If the game was recently updated, AscentUI may have been moved or renamed.");
+					return;
+				}
+
+				LogVerbose($"Found AscentUI on '{originalAscentUI.gameObject.name}' — cloning for MorePeak HUD.");
+
+				var originalTransform = originalAscentUI.transform;
+
+				// Clone the AscentUI GameObject so we inherit its RectTransform settings,
+				// TMP component, font material, and canvas hierarchy position.
+				var hudRectTransform = (RectTransform)UnityEngine.Object.Instantiate(
+					originalTransform, originalTransform.parent);
+				hudRectTransform.name = "MorePeakLevelDisplay";
+
+				// Remove the game's own AscentUI behaviour — we only want the TMP shell.
+				var ascentComponent = hudRectTransform.GetComponent<AscentUI>();
+				if (ascentComponent != null) {
+					LogVerbose("Destroying cloned AscentUI component from MorePeak HUD object.");
+					UnityEngine.Object.Destroy(ascentComponent);
+				}
+
+				// Attach our own HUD driver.
+				hudRectTransform.gameObject.AddComponent<MorePeakHUD>();
+
+				// Anchor to top-right so it never overlaps the AscentUI which sits elsewhere.
+				hudRectTransform.pivot = hudRectTransform.anchorMax = hudRectTransform.anchorMin =
+					new Vector2(1f, 1f);
+				hudRectTransform.anchoredPosition = Vector2.zero;
+
+				ModLogger.LogInfo("[MorePeak] HUD initialised successfully.");
+				LogVerbose($"MorePeakHUD anchored to top-right of '{hudRectTransform.parent.name}'.");
+			} catch (Exception ex) {
+				ModLogger.LogError($"[MorePeak] Exception while initialising HUD in GUIManager.Start patch: {ex}");
+			}
+		}
 	}
 
+	// =========================================================================
+	// GUI drawing helpers
+	// =========================================================================
+
+	/// <summary>
+	/// Draws the small settings-cog button in the top-right corner.
+	/// Hidden during active rounds so it doesn't clutter the view.
+	/// </summary>
 	private void DrawSettingsCog() {
-		// Only show settings cog when not in a round
+		// Hide (and close) the settings window while inside a round.
 		if (showLevelGUI) {
-			// Close settings window if it's open when entering a round
 			if (showSettingsGUI) {
 				showSettingsGUI = false;
+				LogVerbose("Settings window auto-closed because a round started.");
 			}
 			return;
 		}
 
-		// Position in top right corner
-		float cogSize = 32;
-		float x = Screen.width - cogSize - 10;
-		float y = 10;
+		float cogSize = 32f;
+		float x = Screen.width - cogSize - 10f;
+		float y = 10f;
 
-		// Draw the settings cog button with the loaded texture
-		if (settingsCogTexture != null) {
-			var styleToUse = cachedCogStyle ?? GUI.skin.button;
-			if (GUI.Button(new Rect(x, y, cogSize, cogSize), settingsCogTexture, styleToUse)) {
-				ModLogger.LogInfo("Settings cog clicked!");
-				showSettingsGUI = !showSettingsGUI;
+		var styleToUse = cachedCogStyle ?? GUI.skin.button;
 
-				// Initialize temp values when opening settings
-				if (showSettingsGUI) {
-					tempSelectedLevel = selectedLevelConfig.Value;
-					tempShowCurrentLevel = showCurrentLevelGUIConfig.Value;
-					tempShowSelectedLevelConfig = showSelectedLevelConfigGUIConfig.Value;
+		bool clicked = settingsCogTexture != null
+			? GUI.Button(new Rect(x, y, cogSize, cogSize), settingsCogTexture, styleToUse)
+			: GUI.Button(new Rect(x, y, cogSize, cogSize), "⚙", BuildFallbackCogStyle());
 
-					// Position window below the button
-					float windowX = x - 330 + cogSize; // Align right edge of window with right edge of button
-					float windowY = y + cogSize + 5; // 5 pixels below the button
+		if (clicked) {
+			showSettingsGUI = !showSettingsGUI;
+			LogVerbose($"Settings cog clicked — settings window is now {(showSettingsGUI ? "open" : "closed")}.");
 
-					// Ensure window stays within screen bounds
-					if (windowX < 10) windowX = 10; // Keep at least 10px from left edge
-					if (windowY + 200 > Screen.height - 10) windowY = Screen.height - 210; // Keep at least 10px from bottom edge
+			if (showSettingsGUI) {
+				// Mirror current config values into the temporary editing fields.
+				tempSelectedLevel = selectedLevelConfig.Value;
+				tempShowCurrentLevel = showCurrentLevelGUIConfig.Value;
+				tempShowSelectedLevelConfig = showSelectedLevelConfigGUIConfig.Value;
+				tempVerboseLogging = verboseLoggingConfig.Value;
 
-					settingsWindowRect = new Rect(windowX, windowY, 330, 200);
-					ModLogger.LogInfo("Settings window opened");
-				} else {
-					ModLogger.LogInfo("Settings window closed");
-				}
-			}
-		} else {
-			ModLogger.LogDebug("Using fallback text cog (⚙)");
-			// Fallback to text if texture failed to load
-			var fallbackStyle = new GUIStyle(cachedCogStyle ?? GUI.skin.button);
-			fallbackStyle.fontSize = 14;
-			fallbackStyle.fontStyle = FontStyle.Bold;
-			fallbackStyle.normal.textColor = Color.white;
-			fallbackStyle.hover.textColor = Color.yellow;
-
-			if (GUI.Button(new Rect(x, y, cogSize, cogSize), "⚙", fallbackStyle)) {
-				ModLogger.LogInfo("Settings cog clicked!");
-				showSettingsGUI = !showSettingsGUI;
-
-				// Initialize temp values when opening settings
-				if (showSettingsGUI) {
-					tempSelectedLevel = selectedLevelConfig.Value;
-					tempShowCurrentLevel = showCurrentLevelGUIConfig.Value;
-					tempShowSelectedLevelConfig = showSelectedLevelConfigGUIConfig.Value;
-
-					// Position window below the button
-					float windowX = x - 330 + cogSize; // Align right edge of window with right edge of button
-					float windowY = y + cogSize + 5; // 5 pixels below the button
-
-					// Ensure window stays within screen bounds
-					if (windowX < 10) windowX = 10; // Keep at least 10px from left edge
-					if (windowY + 200 > Screen.height - 10) windowY = Screen.height - 210; // Keep at least 10px from bottom edge
-
-					settingsWindowRect = new Rect(windowX, windowY, 330, 200);
-					ModLogger.LogInfo("Settings window opened");
-				} else {
-					ModLogger.LogInfo("Settings window closed");
-				}
+				// Position the window below and flush-right with the cog button.
+				float windowX = x - 330f + cogSize;
+				float windowY = y + cogSize + 5f;
+				if (windowX < 10f) windowX = 10f;
+				if (windowY + 255f > Screen.height - 10f) windowY = Screen.height - 265f;
+				settingsWindowRect = new Rect(windowX, windowY, 330f, 255f);
 			}
 		}
 	}
 
+	/// <summary>
+	/// Builds a minimal fallback style for the cog button when the texture
+	/// asset failed to load.
+	/// </summary>
+	private GUIStyle BuildFallbackCogStyle() {
+		var style = new GUIStyle(cachedCogStyle ?? GUI.skin.button);
+		style.fontSize = 14;
+		style.fontStyle = FontStyle.Bold;
+		style.normal.textColor = Color.white;
+		style.hover.textColor = Color.yellow;
+		return style;
+	}
+
+	/// <summary>Renders the translucent settings panel.</summary>
 	private void DrawSettingsWindow() {
-		// Create semi-transparent background with better contrast
-		GUI.color = new Color(0, 0, 0, 0.9f);
-		GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+		// Full-screen dim behind the window for readability.
+		GUI.color = new Color(0f, 0f, 0f, 0.85f);
+		GUI.Box(new Rect(0f, 0f, Screen.width, Screen.height), "");
 		GUI.color = Color.white;
 
 		var windowStyle = cachedWindowStyle ?? GUI.skin.window;
-		settingsWindowRect = GUI.Window(12345, settingsWindowRect, DrawSettingsWindowContents, "MorePeak Settings", windowStyle);
+		settingsWindowRect = GUI.Window(12345, settingsWindowRect, DrawSettingsWindowContents,
+			"MorePeak Settings", windowStyle);
 	}
 
+	/// <summary>Draws the contents of the draggable settings window.</summary>
 	private void DrawSettingsWindowContents(int windowID) {
-		float yPos = 30;
-		float lineHeight = 25;
-		float labelWidth = 150;
-		float controlWidth = 150;
+		float yPos = 30f;
+		const float LINE_HEIGHT = 25f;
+		const float LABEL_WIDTH = 150f;
+		const float CTRL_WIDTH = 150f;
 
-		// Get styles with fallbacks
 		var labelStyle = cachedLabelStyle ?? GUI.skin.label;
 		var textFieldStyle = cachedTextFieldStyle ?? GUI.skin.textField;
 		var buttonStyle = cachedButtonStyle ?? GUI.skin.button;
 		var toggleStyle = cachedToggleStyle ?? GUI.skin.toggle;
 
-		// Selected Level Configuration
-		GUI.Label(new Rect(10, yPos, labelWidth, 20), "Selected Level:", labelStyle);
-		yPos += lineHeight;
+		// ----- Selected Level -----
+		GUI.Label(new Rect(10f, yPos, LABEL_WIDTH, 20f), "Selected Level:", labelStyle);
+		yPos += LINE_HEIGHT;
 
-		string newSelectedLevel = GUI.TextField(new Rect(10, yPos, controlWidth, 20), tempSelectedLevel, textFieldStyle);
+		string newSelectedLevel = GUI.TextField(
+			new Rect(10f, yPos, CTRL_WIDTH, 20f), tempSelectedLevel, textFieldStyle);
 		if (newSelectedLevel != tempSelectedLevel) {
 			tempSelectedLevel = newSelectedLevel;
-			// Apply immediately
 			selectedLevelConfig.Value = tempSelectedLevel;
 			Config.Save();
-			ModLogger.LogInfo("SelectedLevel updated to: " + tempSelectedLevel);
+			LogVerbose($"SelectedLevel updated via GUI to: '{tempSelectedLevel}'.");
 		}
-		yPos += lineHeight + 5;
+		yPos += LINE_HEIGHT + 5f;
 
-		// Quick preset button for Random only
-		if (GUI.Button(new Rect(10, yPos, 70, 20), "Random", buttonStyle)) {
+		// Quick-preset buttons: Random and Daily
+		if (GUI.Button(new Rect(10f, yPos, 70f, 20f), "Random", buttonStyle)) {
 			tempSelectedLevel = "Random";
-			// Apply immediately
-			selectedLevelConfig.Value = tempSelectedLevel;
+			selectedLevelConfig.Value = "Random";
 			Config.Save();
-			ModLogger.LogInfo("SelectedLevel set to Random");
+			LogVerbose("SelectedLevel set to 'Random' via quick-preset button.");
 		}
-
-		// Daily preset button
-		if (GUI.Button(new Rect(85, yPos, 70, 20), "Daily", buttonStyle)) {
+		if (GUI.Button(new Rect(85f, yPos, 70f, 20f), "Daily", buttonStyle)) {
 			tempSelectedLevel = "Daily";
-			// Apply immediately
-			selectedLevelConfig.Value = tempSelectedLevel;
+			selectedLevelConfig.Value = "Daily";
 			Config.Save();
-			ModLogger.LogInfo("SelectedLevel set to Daily");
+			LogVerbose("SelectedLevel set to 'Daily' via quick-preset button.");
 		}
-		yPos += lineHeight + 10;
+		yPos += LINE_HEIGHT + 10f;
 
-		// GUI Display Options
-		GUI.Label(new Rect(10, yPos, labelWidth, 20), "Display Options:", labelStyle);
-		yPos += lineHeight;
+		// ----- Display Options -----
+		GUI.Label(new Rect(10f, yPos, LABEL_WIDTH, 20f), "Display Options:", labelStyle);
+		yPos += LINE_HEIGHT;
 
-		bool newShowCurrentLevel = GUI.Toggle(new Rect(10, yPos, controlWidth, 20), tempShowCurrentLevel, "Show Current Level", toggleStyle);
+		bool newShowCurrentLevel = GUI.Toggle(
+			new Rect(10f, yPos, CTRL_WIDTH, 20f),
+			tempShowCurrentLevel, "Show Current Level", toggleStyle);
 		if (newShowCurrentLevel != tempShowCurrentLevel) {
 			tempShowCurrentLevel = newShowCurrentLevel;
-			// Apply immediately
 			showCurrentLevelGUIConfig.Value = tempShowCurrentLevel;
 			Config.Save();
-			ModLogger.LogInfo("ShowCurrentLevel updated to: " + tempShowCurrentLevel);
+			LogVerbose($"ShowCurrentLevel toggled to {tempShowCurrentLevel} via GUI.");
 		}
-		yPos += lineHeight;
+		yPos += LINE_HEIGHT;
 
-		bool newShowSelectedLevelConfig = GUI.Toggle(new Rect(10, yPos, controlWidth, 20), tempShowSelectedLevelConfig, "Show Config", toggleStyle);
+		bool newShowSelectedLevelConfig = GUI.Toggle(
+			new Rect(10f, yPos, CTRL_WIDTH, 20f),
+			tempShowSelectedLevelConfig, "Show Config", toggleStyle);
 		if (newShowSelectedLevelConfig != tempShowSelectedLevelConfig) {
 			tempShowSelectedLevelConfig = newShowSelectedLevelConfig;
-			// Apply immediately
 			showSelectedLevelConfigGUIConfig.Value = tempShowSelectedLevelConfig;
 			Config.Save();
-			ModLogger.LogInfo("ShowSelectedLevelConfig updated to: " + tempShowSelectedLevelConfig);
+			LogVerbose($"ShowSelectedLevelConfig toggled to {tempShowSelectedLevelConfig} via GUI.");
 		}
-		yPos += lineHeight + 10;
+		yPos += LINE_HEIGHT + 10f;
 
-		// Close button (no Apply button needed since changes are applied immediately)
-		if (GUI.Button(new Rect(10, yPos, 70, 20), "Close", buttonStyle)) {
+		// ----- Debug Options -----
+		GUI.Label(new Rect(10f, yPos, LABEL_WIDTH, 20f), "Debug Options:", labelStyle);
+		yPos += LINE_HEIGHT;
+
+		bool newVerboseLogging = GUI.Toggle(
+			new Rect(10f, yPos, CTRL_WIDTH, 20f),
+			tempVerboseLogging, "Verbose Logging", toggleStyle);
+		if (newVerboseLogging != tempVerboseLogging) {
+			tempVerboseLogging = newVerboseLogging;
+			verboseLoggingConfig.Value = tempVerboseLogging;
+			Config.Save();
+			// This message is always logged (not guarded by verbose) so the player
+			// gets confirmation that the toggle worked.
+			ModLogger.LogInfo($"[MorePeak] Verbose logging {(tempVerboseLogging ? "enabled" : "disabled")} via in-game settings.");
+		}
+		yPos += LINE_HEIGHT + 10f;
+
+		// ----- Close button -----
+		if (GUI.Button(new Rect(10f, yPos, 70f, 20f), "Close", buttonStyle)) {
 			showSettingsGUI = false;
+			LogVerbose("Settings window closed via Close button.");
 		}
 
-		// Close button in top right of window
-		if (GUI.Button(new Rect(settingsWindowRect.width - 25, 5, 20, 20), "X", buttonStyle)) {
+		// X button in the title bar area
+		if (GUI.Button(new Rect(settingsWindowRect.width - 25f, 5f, 20f, 20f), "X", buttonStyle)) {
 			showSettingsGUI = false;
+			LogVerbose("Settings window closed via X button.");
 		}
 
-		// Make window draggable
 		GUI.DragWindow();
 	}
 
+	// =========================================================================
+	// Texture / style helpers
+	// =========================================================================
+
+	/// <summary>
+	/// Attempts to load the settings-cog PNG from embedded resources.
+	/// Falls back to a flat grey square if the asset is missing.
+	/// </summary>
 	private void LoadSettingsCogTexture() {
 		try {
-			// Load the settings cog texture from embedded resource
-			using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("MorePeak.assets.settings-cog.png")) {
-				if (stream != null) {
-					byte[] imageData = new byte[stream.Length];
-					stream.Read(imageData, 0, imageData.Length);
+			using var stream = Assembly.GetExecutingAssembly()
+				.GetManifestResourceStream("MorePeak.assets.settings-cog.png");
 
-					settingsCogTexture = new Texture2D(2, 2);
-					settingsCogTexture.LoadImage(imageData);
-					ModLogger.LogInfo("Settings cog texture loaded successfully from embedded resource");
-				} else {
-					ModLogger.LogWarning("settings-cog.png embedded resource not found");
-					// Create a fallback texture
-					settingsCogTexture = MakeTexture(32, 32, Color.gray);
-				}
+			if (stream != null) {
+				byte[] imageData = new byte[stream.Length];
+				stream.Read(imageData, 0, imageData.Length);
+				settingsCogTexture = new Texture2D(2, 2);
+				settingsCogTexture.LoadImage(imageData);
+				LogVerbose("settings-cog.png loaded from embedded resources.");
+			} else {
+				ModLogger.LogWarning("[MorePeak] Embedded resource 'MorePeak.assets.settings-cog.png' not found — using fallback grey square.");
+				settingsCogTexture = MakeTexture(32, 32, Color.gray);
 			}
 		} catch (Exception ex) {
-			ModLogger.LogError("Error loading settings cog texture: " + ex.Message);
-			// Create a fallback texture
+			ModLogger.LogError($"[MorePeak] Failed to load settings-cog texture: {ex.Message}");
 			settingsCogTexture = MakeTexture(32, 32, Color.gray);
 		}
 	}
 
+	/// <summary>
+	/// Creates and caches all GUIStyles and their backing textures.
+	/// Called lazily on the first OnGUI frame so that <c>GUI.skin</c> is valid.
+	/// </summary>
 	private void InitializeCachedStyles() {
-		ModLogger.LogDebug("Initializing cached styles and textures");
+		cachedDarkBackgroundTexture    = MakeTexture(2, 2, new Color(0.00f, 0.00f, 0.00f, 0.70f));
+		cachedButtonBackgroundTexture  = MakeTexture(2, 2, new Color(0.20f, 0.20f, 0.20f, 0.80f));
+		cachedButtonHoverTexture       = MakeTexture(2, 2, new Color(0.30f, 0.30f, 0.30f, 0.90f));
+		cachedButtonActiveTexture      = MakeTexture(2, 2, new Color(0.40f, 0.40f, 0.40f, 0.90f));
+		cachedTextFieldBackgroundTexture = MakeTexture(2, 2, new Color(0.20f, 0.20f, 0.20f, 0.90f));
+		cachedWindowBackgroundTexture  = MakeTexture(2, 2, new Color(0.10f, 0.10f, 0.10f, 0.95f));
 
-		// Create cached textures once
-		cachedDarkBackgroundTexture = MakeTexture(2, 2, new Color(0, 0, 0, 0.7f));
-		cachedButtonBackgroundTexture = MakeTexture(2, 2, new Color(0.2f, 0.2f, 0.2f, 0.8f));
-		cachedButtonHoverTexture = MakeTexture(2, 2, new Color(0.3f, 0.3f, 0.3f, 0.9f));
-		cachedButtonActiveTexture = MakeTexture(2, 2, new Color(0.4f, 0.4f, 0.4f, 0.9f));
-		cachedTextFieldBackgroundTexture = MakeTexture(2, 2, new Color(0.2f, 0.2f, 0.2f, 0.9f));
-		cachedWindowBackgroundTexture = MakeTexture(2, 2, new Color(0.1f, 0.1f, 0.1f, 0.95f));
+		cachedCogStyle = new GUIStyle(GUI.skin.button) {
+			normal  = { background = cachedButtonBackgroundTexture },
+			hover   = { background = cachedButtonHoverTexture },
+			active  = { background = cachedButtonActiveTexture },
+		};
 
-		ModLogger.LogDebug("Cached textures created");
+		cachedLabelStyle = new GUIStyle(GUI.skin.label) {
+			fontSize = 12,
+			wordWrap = true,
+			normal   = { textColor = Color.white },
+		};
 
-		// Create cached GUIStyles
-		cachedCogStyle = new GUIStyle(GUI.skin.button);
-		cachedCogStyle.normal.background = cachedButtonBackgroundTexture;
-		cachedCogStyle.hover.background = cachedButtonHoverTexture;
-		cachedCogStyle.active.background = cachedButtonActiveTexture;
+		cachedTextFieldStyle = new GUIStyle(GUI.skin.textField) {
+			fontSize = 12,
+			normal   = { background = cachedTextFieldBackgroundTexture, textColor = Color.white },
+		};
 
-		cachedLabelStyle = new GUIStyle(GUI.skin.label);
-		cachedLabelStyle.fontSize = 12;
-		cachedLabelStyle.wordWrap = true;
-		cachedLabelStyle.normal.textColor = Color.white;
+		cachedButtonStyle = new GUIStyle(GUI.skin.button) {
+			fontSize = 12,
+			normal   = { background = cachedButtonBackgroundTexture, textColor = Color.white },
+			hover    = { background = cachedButtonHoverTexture, textColor = Color.yellow },
+		};
 
-		cachedTextFieldStyle = new GUIStyle(GUI.skin.textField);
-		cachedTextFieldStyle.fontSize = 12;
-		cachedTextFieldStyle.normal.background = cachedTextFieldBackgroundTexture;
-		cachedTextFieldStyle.normal.textColor = Color.white;
+		cachedToggleStyle = new GUIStyle(GUI.skin.toggle) {
+			fontSize = 12,
+			normal   = { textColor = Color.white },
+		};
 
-		cachedButtonStyle = new GUIStyle(GUI.skin.button);
-		cachedButtonStyle.fontSize = 12;
-		cachedButtonStyle.normal.background = cachedButtonBackgroundTexture;
-		cachedButtonStyle.hover.background = cachedButtonHoverTexture;
-		cachedButtonStyle.normal.textColor = Color.white;
-		cachedButtonStyle.hover.textColor = Color.yellow;
+		cachedWindowStyle = new GUIStyle(GUI.skin.window) {
+			fontSize = 14,
+			normal   = { background = cachedWindowBackgroundTexture },
+			onNormal = { background = cachedWindowBackgroundTexture },
+		};
 
-		cachedToggleStyle = new GUIStyle(GUI.skin.toggle);
-		cachedToggleStyle.fontSize = 12;
-		cachedToggleStyle.normal.textColor = Color.white;
+		LogVerbose("Cached GUI styles and textures initialised.");
+	}
 
-		cachedWindowStyle = new GUIStyle(GUI.skin.window);
-		cachedWindowStyle.fontSize = 14;
-		cachedWindowStyle.normal.background = cachedWindowBackgroundTexture;
-		cachedWindowStyle.onNormal.background = cachedWindowBackgroundTexture;
+	/// <summary>Creates a solid-colour <see cref="Texture2D"/> of the given size.</summary>
+	private Texture2D MakeTexture(int width, int height, Color color) {
+		Color[] pixels = new Color[width * height];
+		for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+		var texture = new Texture2D(width, height);
+		texture.SetPixels(pixels);
+		texture.Apply();
+		return texture;
+	}
 
-		ModLogger.LogDebug("Cached styles created successfully");
+	/// <summary>Safely destroys a texture and sets the reference to null.</summary>
+	private static void DestroyTextureSafe(ref Texture2D texture) {
+		if (texture != null) {
+			DestroyImmediate(texture);
+			texture = null;
+		}
 	}
 }

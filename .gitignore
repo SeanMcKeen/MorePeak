@@ -354,9 +354,5 @@ FodyWeavers.xsd
 # Thunderstore
 thunderstore/
 
-MorePeak/Assembly-CSharp.dll
-MorePeak/PhotonUnityNetworking.dll
-MorePeak/Sirenix.Serialization.dll
-MorePeak/UnityEngine.UI.dll
-MorePeak/Unity.TextMeshPro.dll
-MorePeak/Zorro.Core.Runtime.dll
+# ignore source files from dotpeek
+dotpeek proj/
