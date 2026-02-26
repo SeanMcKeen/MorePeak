@@ -2,10 +2,10 @@
 
 *Configurable in BepInEx/config/com.smckeen.morepeak.cfg*
 
-**INSTALLATION INSTRUCTIONS**
+**MANUAL INSTALLATION INSTRUCTIONS**
 1. Download BepInEx & Extract All from BepInEx ZIP archive to new folder (anywhere - just know where it is)
 2. Find PEAK Installation: Steam -> PEAK -> Manage -> Browse Local Files
-3. Copy all CONTENTS of the extracted folder (not the folder) into the PEAK folder
+3. Copy all CONTENTS of the extracted folder from step 1 (not including the folder) into that PEAK folder from step 2.
 4. Run Game to Generate plugins/extra folders
 5. Go to BepInEx -> plugins
 6. Drop in the MorePeak.dll to the plugins folder
