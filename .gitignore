@@ -351,9 +351,8 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 
-# Thunderstore — generated packages and zips only; thunderstore/template/ is tracked
-thunderstore/MorePeak_*/
-thunderstore/*.zip
+# Thunderstore
+thunderstore/
 
 # ignore source files from dotpeek
 dotpeek proj/
@@ -366,3 +365,4 @@ MorePeak/UnityEngine.UI.dll
 MorePeak/Unity.TextMeshPro.dll
 MorePeak/Zorro.Core.Runtime.dll
 new_gamefiles/
+
