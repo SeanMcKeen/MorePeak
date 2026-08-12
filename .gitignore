@@ -353,6 +353,7 @@ FodyWeavers.xsd
 
 # Thunderstore
 thunderstore/
+build-package.ps1
 
 # ignore source files from dotpeek
 dotpeek proj/
@@ -365,4 +366,6 @@ MorePeak/UnityEngine.UI.dll
 MorePeak/Unity.TextMeshPro.dll
 MorePeak/Zorro.Core.Runtime.dll
 new_gamefiles/
+
+
 
