@@ -6,11 +6,19 @@
     <AssemblyName>MorePeak</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
+
+    <!-- Single source of truth for the mod version. BepInEx.PluginInfoProps turns these
+         into MyPluginInfo constants, and build-package.ps1 reads Version from here to
+         stamp the Thunderstore manifest, folder name, and zip. Bump it in one place. -->
+    <Version>2.0.0</Version>
+    <BepInExPluginGuid>com.smckeen.morepeak</BepInExPluginGuid>
+    <BepInExPluginName>MorePeak</BepInExPluginName>
     <RestoreAdditionalProjectSources>
       https://api.nuget.org/v3/index.json;
       https://nuget.bepinex.dev/v3/index.json;
     </RestoreAdditionalProjectSources>
-    <PeakDir>/home/brad/.local/share/Steam/steamapps/common/PEAK</PeakDir>
+    <!-- Local copies of game Managed DLLs live next to this project (refreshed from new_gamefiles/). -->
+    <GameRefDir>$(MSBuildThisFileDirectory)</GameRefDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,22 +34,22 @@
 
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
-      <HintPath>E:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(GameRefDir)Assembly-CSharp.dll</HintPath>
     </Reference>
     <Reference Include="PhotonUnityNetworking">
-      <HintPath>E:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\PhotonUnityNetworking.dll</HintPath>
+      <HintPath>$(GameRefDir)PhotonUnityNetworking.dll</HintPath>
     </Reference>
     <Reference Include="Sirenix.Serialization">
-      <HintPath>E:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Sirenix.Serialization.dll</HintPath>
+      <HintPath>$(GameRefDir)Sirenix.Serialization.dll</HintPath>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
-      <HintPath>E:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>$(GameRefDir)Unity.TextMeshPro.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>E:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <HintPath>$(GameRefDir)UnityEngine.UI.dll</HintPath>
     </Reference>
     <Reference Include="Zorro.Core.Runtime">
-      <HintPath>E:\SteamLibrary\steamapps\common\PEAK\PEAK_Data\Managed\Zorro.Core.Runtime.dll</HintPath>
+      <HintPath>$(GameRefDir)Zorro.Core.Runtime.dll</HintPath>
     </Reference>
   </ItemGroup>
 </Project>

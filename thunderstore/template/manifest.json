@@ -1,0 +1,9 @@
+{
+    "name": "MorePeak",
+    "version_number": "__VERSION__",
+    "website_url": "https://github.com/SeanMcKeen/MorePeak",
+    "description": "Skip the daily timer - play any map, a random map, or stick with Daily. Updated for PEAK 2.0.a!",
+    "dependencies": [
+        "BepInEx-BepInExPack_PEAK-5.4.2403"
+    ]
+}

@@ -1,14 +1,67 @@
-**This mod removes the daily wait timer for new maps, and instead loads a new map every time you start a round!**
+# MorePeak
 
-*Configurable in BepInEx/config/com.smckeen.morepeak.cfg*
+Skip the daily map timer. Play any level you want, or let the mod pick one at random.
 
-**MANUAL INSTALLATION INSTRUCTIONS**
-1. Download BepInEx & Extract All from BepInEx ZIP archive to new folder (anywhere - just know where it is)
-2. Find PEAK Installation: Steam -> PEAK -> Manage -> Browse Local Files
-3. Copy all CONTENTS of the extracted folder from step 1 (not including the folder) into that PEAK folder from step 2.
-4. Run Game to Generate plugins/extra folders
-5. Go to BepInEx -> plugins
-6. Drop in the MorePeak.dll to the plugins folder
-7. Run PEAK
+**Compatible with PEAK 2.0.a** · Version **2.0.0**
 
-(Configuration Options can be found in BepInEx -> config -> com.smckeen.morepeak.cfg)
+[Thunderstore](https://thunderstore.io/c/peak/p/smckeen/MorePeak/) · [GitHub](https://github.com/SeanMcKeen/MorePeak)
+
+---
+
+## Features
+
+- **Random** — a new map every round
+- **Daily** — keep vanilla daily rotation (mod effectively off)
+- **Specific level** — e.g. `Level_0`
+- **Custom pool** — comma-separated list, random pick from that set  
+  e.g. `Level_0, Level_1, Level_2`
+- **In-game settings cog** — change options between rounds without restarting
+- **Optional HUD** — show current level and/or config on screen
+
+---
+
+## Installation (manual)
+
+1. Install **BepInExPack PEAK** (required dependency).
+2. Extract / copy BepInEx into your PEAK install folder  
+   (`Steam -> PEAK -> Manage -> Browse Local Files`).
+3. Launch PEAK once so `BepInEx/plugins` is created.
+4. Place `MorePeak.dll` into `BepInEx/plugins` (or `BepInEx/plugins/MorePeak`).
+5. Launch PEAK again.
+
+Thunderstore / r2modman users can install normally through the mod manager.
+
+---
+
+## Configuration
+
+Edit:
+
+`BepInEx/config/com.smckeen.morepeak.cfg`
+
+Or use the **settings cog** in the top-right (available between rounds).
+
+| Setting | Options |
+| --- | --- |
+| `SelectedLevel` | `Random`, `Daily`, a level name, or a comma-separated list |
+| `ShowCurrentLevel` | Show the active level name during a round |
+| `ShowSelectedLevelConfig` | Show your current config value during a round |
+| `VerboseLogging` | Extra diagnostic logs (off by default) |
+
+Available level names are printed to the BepInEx log the first time you start a game.
+
+---
+
+## Speedrunners
+
+For a seedless-valid run, enable **Show Current Level** and **Show Config**.
+
+---
+
+## Changelog
+
+See [`thunderstore/template/CHANGELOG.md`](thunderstore/template/CHANGELOG.md) for full history.
+
+### 1.9.3
+- Updated for PEAK **2.0.a**
+- Updated `BeginIslandLoadRPC` patch for the new run-settings parameter

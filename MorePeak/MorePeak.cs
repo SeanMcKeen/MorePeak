@@ -12,7 +12,7 @@ using MorePeak.MonoBehaviours;
 
 namespace MorePeak;
 
-[BepInPlugin("com.smckeen.morepeak", "MorePeak", "1.9.2")]
+[BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
 public class MorePeakPlugin : BaseUnityPlugin {
 	// -------------------------------------------------------------------------
 	// Static logger — exposed internally so MorePeakHUD can call LogVerbose too.
@@ -133,7 +133,7 @@ public class MorePeakPlugin : BaseUnityPlugin {
 			"Emit detailed diagnostic log messages. Leave disabled during normal play " +
 			"to avoid log spam. Can also be toggled in-game via the settings cog.");
 
-		ModLogger.LogInfo("MorePeak v1.9.2 loaded.");
+		ModLogger.LogInfo($"MorePeak v{MyPluginInfo.PLUGIN_VERSION} loaded.");
 		ModLogger.LogInfo($"Config  |  SelectedLevel={selectedLevelConfig.Value}" +
 		                  $"  ShowCurrentLevel={showCurrentLevelGUIConfig.Value}" +
 		                  $"  ShowSelectedLevelConfig={showSelectedLevelConfigGUIConfig.Value}" +
@@ -411,11 +411,12 @@ public class MorePeakPlugin : BaseUnityPlugin {
 	/// connected clients (not just the host) update the on-screen level name when
 	/// they receive the RPC to load a scene.
 	///
-	/// Updated: host detection uses <c>NetCode.Session.IsHost</c>.
+	/// PEAK 2.0.a added <c>byte[] serializedRunSettings</c> to this RPC signature.
+	/// Host detection uses <c>NetCode.Session.IsHost</c>.
 	/// </summary>
 	[HarmonyPatch(typeof(AirportCheckInKiosk), "BeginIslandLoadRPC")]
 	static class AirportCheckInKiosk_BeginIslandLoadRPC_Patch {
-		static void Prefix(string sceneName, int ascent) {
+		static void Prefix(string sceneName, int ascent, byte[] serializedRunSettings) {
 			try {
 				currentLevelName = sceneName;
 				showLevelGUI = true;
@@ -424,7 +425,8 @@ public class MorePeakPlugin : BaseUnityPlugin {
 				// PhotonNetwork.IsMasterClient.
 				string clientInfo = NetCode.Session.IsHost ? "[HOST]" : "[CLIENT]";
 				ModLogger.LogInfo($"{clientInfo} BeginIslandLoadRPC received — loading level: '{sceneName}' (ascent: {ascent}).");
-				LogVerbose($"{clientInfo} GUI updated: currentLevelName='{currentLevelName}', showLevelGUI=true.");
+				LogVerbose($"{clientInfo} GUI updated: currentLevelName='{currentLevelName}', showLevelGUI=true" +
+				           $", runSettingsBytes={(serializedRunSettings == null ? 0 : serializedRunSettings.Length)}.");
 			} catch (Exception ex) {
 				ModLogger.LogError($"[MorePeak] Exception in BeginIslandLoadRPC patch: {ex}");
 			}
